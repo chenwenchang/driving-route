@@ -3,6 +3,8 @@
 把 YouTube 上的 mock test 路线视频变成**可视化的路线 + 注意点**：限速、环岛走法、左转自行车道盲区、黄色网格、车道选择……
 电脑上录入，手机上预习、导航。需求整理和分层计划见 [PLAN.md](PLAN.md)。
 
+**手机端在线地址：<https://chenwenchang.github.io/driving-route/>**。用手机 Chrome 打开，然后「安装应用」。每次推送到 main 分支，都会自动重新发布。
+
 ## 快速开始
 
 ```bash
