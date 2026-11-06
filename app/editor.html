@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>路线编辑器 · 路考路线</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/editor.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" title="查看端"><span class="logo" id="logo"></span><b>路线编辑器</b></a>
+    <select id="route-select" title="选择路线"></select>
+    <button class="btn sm" id="btn-new">新建</button>
+    <input type="text" id="route-name" placeholder="路线名称，例如 Route 3 – Milton Rd" aria-label="路线名称">
+    <span class="save-state" id="save-state"></span>
+    <div class="spacer"></div>
+    <button class="btn sm" id="btn-auto" title="从 OpenStreetMap 自动识别限速、环岛、人行横道等">自动识别</button>
+    <button class="btn sm" id="btn-export">导出 / 导入</button>
+    <a class="btn sm" id="btn-preview" target="_blank" rel="noopener">手机视图 ↗</a>
+    <button class="btn sm icon ghost" id="btn-help" title="快捷键与用法">?</button>
+  </header>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="video-panel">
+        <div class="video-load">
+          <input type="url" id="video-url" placeholder="粘贴 YouTube 链接（mock test 路线视频）">
+          <button class="btn sm primary" id="btn-load-yt">加载</button>
+          <label class="btn sm" title="打开电脑上的视频文件（可一键截图）">本地视频<input type="file" id="video-file" accept="video/*" hidden></label>
+        </div>
+        <div class="video-box" id="video-box"><div class="video-empty">先加载视频。<br>支持 YouTube 链接，或电脑上的视频文件。</div></div>
+        <div class="video-ctl">
+          <button class="btn sm icon" id="v-back" title="后退 5 秒 (←)">-5</button>
+          <button class="btn sm icon" id="v-play" title="播放/暂停 (空格)"></button>
+          <button class="btn sm icon" id="v-fwd" title="前进 5 秒 (→)">+5</button>
+          <span class="mono" id="v-time">0:00</span>
+          <select id="v-rate" title="播放速度"><option>0.5</option><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option></select>
+          <label class="small row" title="播放时地图跟随小车"><input type="checkbox" id="v-follow" checked>跟随</label>
+          <div class="spacer"></div>
+          <button class="btn sm" id="btn-shot" title="截取当前画面到选中的标注 (C)"></button>
+          <button class="btn sm" id="btn-tabcap" title="让浏览器共享此标签页，之后可以一键截取 YouTube 画面">开启一键截图</button>
+        </div>
+      </section>
+
+      <section class="tools">
+        <div class="tool-row">
+          <button class="tool" data-mode="browse" title="浏览/选择 (Esc)">✋ 浏览</button>
+          <button class="tool" data-mode="waypoint" title="点地图添加途经点 (W)；Shift+点击 = 插入到最近的路段">📍 途经点 <kbd>W</kbd></button>
+          <button class="btn sm" id="btn-start-time" title="把当前视频时间设为出发时刻（第一个途经点）">设为出发时刻</button>
+          <button class="btn sm" id="btn-back-centre" title="在末尾加一个回到考场的途经点">回到考场</button>
+        </div>
+        <div class="tool-grid" id="type-tools"></div>
+        <div class="mode-hint" id="mode-hint"></div>
+      </section>
+
+      <nav class="side-tabs" id="side-tabs">
+        <button data-tab="ann" aria-selected="true">标注 <span id="cnt-ann"></span></button>
+        <button data-tab="wp">途经点 <span id="cnt-wp"></span></button>
+        <button data-tab="steps">指令</button>
+        <button data-tab="info">路线信息</button>
+      </nav>
+      <section class="side-body" id="side-body"></section>
+    </aside>
+
+    <section class="map-wrap">
+      <div id="map"></div>
+      <div class="map-search">
+        <input type="text" id="geo-q" placeholder="搜索路名，例如 Milton Road（回车）">
+        <div class="geo-results hidden" id="geo-results"></div>
+      </div>
+      <div class="map-status hidden" id="map-status"></div>
+    </section>
+  </main>
+
+  <dialog class="dlg" id="dlg-new">
+    <form method="dialog">
+      <div class="dlg-head"><h3>新建路线</h3></div>
+      <div class="dlg-body">
+        <label class="field">路线名称<input type="text" name="name" required placeholder="例如 Cambridge Route 3 (Milton Rd)"></label>
+        <label class="field">YouTube 视频链接（可选，之后也能填）<input type="url" name="url" placeholder="https://www.youtube.com/watch?v=..."></label>
+        <p class="small muted">起点会自动放在考场（Brookmount Court）。</p>
+      </div>
+      <div class="dlg-foot"><button class="btn" value="cancel" formnovalidate>取消</button><button class="btn primary" value="ok">创建</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="dlg" id="dlg-export">
+    <div class="dlg-head"><h3>导出 / 导入</h3><button class="btn icon ghost" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body">
+      <div class="opt"><h4>传到手机 / 备份</h4><p>路线包包含截图，手机首页点"导入"即可。</p>
+        <div class="row wrap"><button class="btn sm" data-x="pack">导出这条路线</button><button class="btn sm" data-x="pack-all">导出全部路线</button><label class="btn sm">导入路线包<input type="file" id="pack-file" accept=".json,application/json" hidden></label></div></div>
+      <div class="opt"><h4>导航 App</h4><p>GPX：OsmAnd 等（沿轨迹导航，注意点作为航点播报）。KML：Google My Maps。</p>
+        <div class="row wrap"><button class="btn sm" data-x="gpx">GPX</button><button class="btn sm" data-x="kml">KML</button><button class="btn sm" data-x="geojson">GeoJSON</button></div></div>
+      <div class="opt"><h4>Google Maps 分段导航链接</h4><div id="gm-links" class="small"></div></div>
+    </div>
+  </dialog>
+
+  <dialog class="dlg" id="dlg-help">
+    <div class="dlg-head"><h3>用法与快捷键</h3><button class="btn icon ghost" data-close aria-label="关闭">✕</button></div>
+    <div class="dlg-body help">
+      <ol>
+        <li>新建路线，粘贴 YouTube 链接并加载。播放到车辆出发时点"设为出发时刻"。</li>
+        <li>按 <kbd>W</kbd>，每到一个路口就暂停，在地图上点车辆<b>驶入的那条路</b>，路线会自动吸附道路。途经点会记录视频时间，之后小车会跟着视频走。</li>
+        <li>遇到注意点就按数字键选类型（<kbd>1</kbd> 限速 <kbd>2</kbd> 环岛 <kbd>3</kbd> 自行车道 <kbd>4</kbd> 黄色网格 <kbd>5</kbd> 车道 …），然后点地图放置。</li>
+        <li>按 <kbd>C</kbd> 截图到选中的标注（YouTube 需要先"开启一键截图"），或者用 Win+Shift+S 截图后按 <kbd>Ctrl</kbd>+<kbd>V</kbd>。</li>
+        <li>路线完成后点"自动识别"：自动补上限速变化、环岛出口与车道建议、人行横道等，逐个核对后点"确认"。</li>
+      </ol>
+      <table class="keys">
+        <tr><td><kbd>空格</kbd></td><td>播放/暂停</td><td><kbd>←</kbd> <kbd>→</kbd></td><td>后退/前进 5 秒（Shift：1 秒）</td></tr>
+        <tr><td><kbd>W</kbd></td><td>加途经点模式</td><td><kbd>Esc</kbd></td><td>浏览模式 / 取消选择</td></tr>
+        <tr><td><kbd>1</kbd>–<kbd>0</kbd></td><td>放置对应类型的标注</td><td><kbd>Del</kbd></td><td>删除选中项</td></tr>
+        <tr><td><kbd>C</kbd></td><td>截图到选中标注</td><td><kbd>T</kbd></td><td>选中项的时间设为当前</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>撤销</td><td><kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>重做</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>上一个/下一个标注</td><td>右键途经点</td><td>删除途经点</td></tr>
+      </table>
+      <p class="small muted">提示：点击 YouTube 画面后键盘焦点会进入播放器，快捷键暂时无效，点一下地图或左侧空白处即可恢复。</p>
+    </div>
+  </dialog>
+
+  <input type="file" id="img-file" accept="image/*" hidden>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="js/editor.js"></script>
+</body>
+</html>

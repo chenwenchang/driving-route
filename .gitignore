@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tmp
+
+# Your own routes and screenshots stay on this PC by default: the GitHub repo and
+# the Pages site are public, and screenshots come from other people's videos.
+# Move routes to the phone with a route pack (editor → 导出 / 导入), or delete
+# these lines if you are happy to publish them.
+app/data/routes/*
+!app/data/routes/demo-loop.json
+app/data/media/
+app/data/trash/
+
+.claude/settings.local.json

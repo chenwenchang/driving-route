@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "driving-route",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/server.mjs", "--port", "5173"],
+      "port": 5173
+    },
+    {
+      "name": "driving-route-dist",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/server.mjs", "--dir", "dist", "--static", "--port", "5174"],
+      "port": 5174
+    }
+  ]
+}
