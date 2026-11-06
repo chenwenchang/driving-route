@@ -12,6 +12,7 @@ import { createMap, RouteLayer, AnnotationLayer } from './ui/mapkit.js';
 import { markerHtml, GLYPH, UI } from './ui/icons.js';
 import { roundaboutSvg } from './ui/rbdiagram.js';
 import { detailHtml } from './ui/detail.js';
+import { DriveVoice, Simulator, voiceSettings, saveVoiceSettings } from './ui/drive.js';
 import { $, $$, esc, toast, download, settings, lightbox } from './ui/util.js';
 
 applyTheme(settings.get('theme', ''));
@@ -29,9 +30,11 @@ const S = {
   selected: null, review: false, seq: [],
   map: null, routeLayer: null, annLayer: null,
 };
-// GPS state (declared early: onHash() runs before the rest of the module)
-const G = { watch: null, marker: null, circle: null, lastAt: null, follow: true, first: true, wake: null, next: null };
+// GPS / simulation state (declared early: onHash() runs before the rest of the module)
+const G = { watch: null, marker: null, circle: null, lastAt: null, lastT: null, vEst: null, follow: true, first: true, wake: null, next: null, sim: null };
+const drive = new DriveVoice({ caption: $('#caption') });
 const isWide = () => matchMedia('(min-width: 900px)').matches;
+if (new URLSearchParams(location.search).has('debug')) window.__dbg = { S, G, drive };
 
 // ---------------- navigation ----------------
 window.addEventListener('hashchange', onHash);
@@ -39,7 +42,7 @@ onHash();
 
 async function onHash() {
   const m = location.hash.match(/^#\/r\/([^/?]+)/);
-  if (!m || (S.route && decodeURIComponent(m[1]) !== S.route.id)) stopLocate();
+  if (!m || (S.route && decodeURIComponent(m[1]) !== S.route.id)) { stopLocate(); stopSim(); }
   try {
     if (m) await showRoute(decodeURIComponent(m[1]));
     else await showList();
@@ -95,20 +98,24 @@ function initMap() {
   S.annLayer = new AnnotationLayer(S.map, { onSelect: (id) => openDetail(id) });
   S.map.on('click', () => { if (S.selected && !S.review) closeDetail(); });
   S.map.on('dragstart', () => { G.follow = false; });
-  const Locate = L.Control.extend({
+  const DriveButtons = L.Control.extend({
     options: { position: 'topright' },
     onAdd() {
-      const b = L.DomUtil.create('button', 'map-btn');
-      b.id = 'btn-locate';
-      b.type = 'button';
-      b.title = '显示我的位置（练车时把手机固定在支架上，只看不碰）';
-      b.innerHTML = `${UI.target}<span>定位</span>`;
-      L.DomEvent.disableClickPropagation(b);
-      b.addEventListener('click', toggleLocate);
-      return b;
+      const box = L.DomUtil.create('div', 'map-btns');
+      box.innerHTML = `
+        <button class="map-btn" id="btn-locate" type="button" title="显示我的位置和前方注意点（练车时手机固定在支架上，只看不碰）">${UI.target}<span>定位</span></button>
+        <button class="map-btn" id="btn-voice" type="button" title="英文考官语音播报（模仿路考）"></button>
+        <button class="map-btn" id="btn-sim" type="button" title="模拟行驶：在家沿路线预演，听考官指令">${UI.play}<span>模拟</span></button>`;
+      L.DomEvent.disableClickPropagation(box);
+      L.DomEvent.disableScrollPropagation(box);
+      box.querySelector('#btn-locate').addEventListener('click', toggleLocate);
+      box.querySelector('#btn-voice').addEventListener('click', toggleVoice);
+      box.querySelector('#btn-sim').addEventListener('click', () => (G.sim ? stopSim() : startSim()));
+      return box;
     },
   });
-  new Locate().addTo(S.map);
+  new DriveButtons().addTo(S.map);
+  renderVoiceBtn();
   initSheet();
 }
 
@@ -120,6 +127,7 @@ async function showRoute(id) {
     S.cum = cumulative(S.route.route?.geometry || []);
     S.timeline = buildTimeline(S.route, S.cum);
     S.instructions = buildInstructions(S.route);
+    drive.setRoute(S.route);
     S.selected = null; S.review = false;
     S.filter = { key: true, type: null };
     S.routeLayer.set(S.route.route?.geometry || []);
@@ -271,8 +279,14 @@ function rbsHtml() {
 
 function stepsHtml() {
   if (!S.instructions.length) return '<div class="empty">没有路线指令</div>';
-  return `<div class="steps">${S.instructions.map((s, i) => `<button class="step ${s.icon === ARROW.roundabout ? 'rb' : ''}" data-step="${i}">
-    <span class="ic">${esc(s.icon)}</span><span style="min-width:0"><b>${esc(s.zh)}</b><small>${esc(s.en)}</small></span><span class="d">${fmtDist(s.at)}</span></button>`).join('')}</div>`;
+  const vs = voiceSettings();
+  const hint = `<div class="voice-hint">
+    <b>英文考官语音（模仿路考）</b>
+    <span>下面是考官会说的话。点 ${UI.speaker} 试听；地图右上角打开「语音」，再点「定位」就会在合适的位置播报。在家可以点「模拟」沿路线预演。</span>
+    <span class="small muted">当前：${vs.mode === 'practice' ? '练习模式（考官指令 + 英文提示）' : '模拟考试模式（只有考官指令）'} · 在设置里切换</span></div>`;
+  return `${hint}<div class="steps">${S.instructions.map((s, i) => `<div class="step ${s.icon === ARROW.roundabout ? 'rb' : ''}" data-step="${i}" role="button" tabindex="0">
+    <span class="ic">${esc(s.icon)}</span><span style="min-width:0"><b lang="en-GB">${esc(s.en)}</b><small>${esc(s.zh)}${s.road ? ` · ${esc(s.road)}` : ''}</small></span>
+    <span class="d">${fmtDist(s.at)}</span><button class="btn icon ghost say" type="button" data-say="${i}" title="试听" aria-label="试听">${UI.speaker}</button></div>`).join('')}</div>`;
 }
 
 function navHtml() {
@@ -317,6 +331,12 @@ function bindSheetBody() {
     }
     const pt = e.target.closest('[data-id]');
     if (pt && !e.target.closest('.detail')) return openDetail(pt.dataset.id);
+    const say = e.target.closest('[data-say]');
+    if (say) {
+      const s = S.instructions[+say.dataset.say];
+      if (s) drive.sayNow(s.en, s.zh);
+      return;
+    }
     const st = e.target.closest('[data-step]');
     if (st) {
       const s = S.instructions[+st.dataset.step];
@@ -431,8 +451,48 @@ $('#btn-settings').onclick = () => {
   $('#set-gpx').value = settings.get('gpxLang', 'zh');
   $('#set-svkey').value = settings.get('svKey', '');
   $('#set-where').textContent = `路线保存在：${store.where}。${store.mode === 'server' ? '当前连接着电脑上的本地服务器。' : ''}`;
+  fillVoiceSettings();
   $('#dlg-settings').showModal();
 };
+
+// voice settings (English examiner)
+function fillVoiceSettings() {
+  const v = voiceSettings();
+  $('#set-vmode').value = v.mode;
+  $('#set-vtips').value = String(v.tips);
+  $('#set-vrate').value = String(v.rate);
+  $('#set-vshowme').checked = !!v.showMe;
+  $('#set-vchime').checked = !!v.chime;
+  $('#set-vtips').closest('.field').classList.toggle('hidden', v.mode !== 'practice');
+  fillVoices();
+}
+function fillVoices() {
+  const sel = $('#set-voice');
+  const voices = drive.speaker.voices();
+  const cur = drive.speaker.voice();
+  sel.innerHTML = voices.length
+    ? voices.map((x) => `<option value="${esc(x.voiceURI)}" ${cur && x.voiceURI === cur.voiceURI ? 'selected' : ''}>${esc(x.name)} (${esc(x.lang)})${x.localService ? '' : ' · 联网'}</option>`).join('')
+    : '<option value="">（没有英文语音：只显示字幕）</option>';
+  const gb = voices.some((x) => /^en[-_]gb/i.test(x.lang));
+  $('#set-vinfo').textContent = !drive.speaker.supported
+    ? '这个浏览器不支持语音合成，只能显示字幕。'
+    : !voices.length ? '没找到英文语音。Android：系统设置 → 文字转语音 → 安装英语（英国）语音包。'
+      : gb ? '' : '没有英式英语语音，用的是其他英语口音。Android 可以在「文字转语音」里下载英语（英国）。';
+}
+drive.speaker.onVoices = () => { if ($('#dlg-settings').open) fillVoices(); };
+function onVoiceSetting(patch) {
+  saveVoiceSettings(patch);
+  drive.rebuild();
+  fillVoiceSettings();
+  if (S.tab === 'steps' && !S.selected && S.route) renderSheet();
+}
+$('#set-vmode').onchange = (e) => onVoiceSetting({ mode: e.target.value });
+$('#set-vtips').onchange = (e) => onVoiceSetting({ tips: +e.target.value });
+$('#set-vrate').onchange = (e) => onVoiceSetting({ rate: +e.target.value });
+$('#set-vshowme').onchange = (e) => onVoiceSetting({ showMe: e.target.checked });
+$('#set-vchime').onchange = (e) => onVoiceSetting({ chime: e.target.checked });
+$('#set-voice').onchange = (e) => onVoiceSetting({ voiceURI: e.target.value });
+$('#set-vtest').onclick = () => drive.sayNow('At the roundabout, take the third exit, please.', '环岛第三出口');
 $('#dlg-settings').addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target.id === 'dlg-settings') $('#dlg-settings').close(); });
 $('#set-theme').onchange = (e) => { settings.set('theme', e.target.value); applyTheme(e.target.value); };
 $('#set-gpx').onchange = (e) => settings.set('gpxLang', e.target.value);
@@ -449,32 +509,34 @@ function applyTheme(t) {
   else delete document.documentElement.dataset.theme;
 }
 
-// ---------------- my location (GPS) ----------------
+// ---------------- my location (GPS) & drive mode ----------------
 function toggleLocate() { if (G.watch == null) startLocate(); else stopLocate(); }
 
 function startLocate() {
   if (!('geolocation' in navigator)) return toast('这个浏览器不支持定位', 'err');
   if (!window.isSecureContext) return toast('定位需要 HTTPS：请用部署后的网址打开', 'err', 5000);
-  G.first = true; G.lastAt = null; G.follow = true;
+  stopSim();
+  drive.speaker.unlock(); // still inside the tap: lets the examiner speak later
+  drive.begin();
+  G.first = true; G.lastAt = null; G.lastT = null; G.vEst = null; G.follow = true;
   G.watch = navigator.geolocation.watchPosition(onPosition, onPositionError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
   keepAwake(true);
-  setBanner('<b>正在定位…</b><small>第一次使用会询问定位权限</small>');
+  setBanner(`<b>正在定位…</b><small>第一次使用会询问定位权限${drive.on ? '' : ' · 点「语音」可以打开英文考官播报'}</small>`);
   $('#btn-locate')?.classList.add('on');
 }
 
 function stopLocate() {
-  if (G.watch != null) navigator.geolocation.clearWatch(G.watch);
+  if (G.watch == null) return;
+  navigator.geolocation.clearWatch(G.watch);
   G.watch = null; G.next = null;
-  if (G.marker) { G.marker.remove(); G.marker = null; }
-  if (G.circle) { G.circle.remove(); G.circle = null; }
+  drive.end();
+  removeCar();
   keepAwake(false);
   setBanner(null);
   $('#btn-locate')?.classList.remove('on');
 }
 
-function onPosition(pos) {
-  const { latitude, longitude, accuracy, heading, speed } = pos.coords;
-  const p = [latitude, longitude];
+function showCar(p, accuracy) {
   if (!G.marker) {
     G.circle = L.circle(p, { radius: accuracy, color: '#1a73e8', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(S.map);
     G.marker = L.marker(p, { icon: L.divIcon({ className: '', html: '<div class="me"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), interactive: false, zIndexOffset: 6000 }).addTo(S.map);
@@ -484,6 +546,17 @@ function onPosition(pos) {
   }
   if (G.first) { G.first = false; flyTo(p, 17); }
   else if (G.follow && !S.selected && !S.map.getBounds().pad(-0.25).contains(p)) S.map.panTo(p);
+}
+
+function removeCar() {
+  if (G.marker) { G.marker.remove(); G.marker = null; }
+  if (G.circle) { G.circle.remove(); G.circle = null; }
+}
+
+function onPosition(pos) {
+  const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+  const p = [latitude, longitude];
+  showCar(p, accuracy);
   updateProgress(p, heading, speed, accuracy);
 }
 
@@ -493,27 +566,47 @@ function onPositionError(err) {
   if (err.code === 1) stopLocate();
 }
 
-/** Where am I on the route, and what is the next attention point ahead? */
-function updateProgress(p, heading, speed, accuracy) {
+/**
+ * Where am I on the route, what is the next attention point, and what should the
+ * examiner say now? `sim` = state from the simulated drive (position known exactly).
+ */
+function updateProgress(p, heading, speed, accuracy, sim = null) {
   const g = S.route?.route?.geometry;
   if (!g?.length) return;
-  const opts = {};
-  if (heading != null && !Number.isNaN(heading) && speed > 2) opts.bearingHint = heading;
-  if (G.lastAt != null) opts.atHint = G.lastAt; // routes often pass the same road twice
-  const pr = project(g, S.cum, p, opts);
-  const tol = Math.max(45, Math.min(120, (accuracy || 0) * 1.5));
-  if (!pr || pr.dist > tol) {
-    G.next = null;
-    setBanner(`<b>不在这条路线上</b><small>离路线约 ${fmtDist(pr?.dist ?? 0)}${accuracy > 50 ? ` · 定位精度 ±${Math.round(accuracy)} m` : ''}</small>`, true);
-    return;
+  const now = sim ? sim.t : performance.now() / 1000;
+  let at;
+  if (sim) at = sim.at;
+  else {
+    const opts = {};
+    if (heading != null && !Number.isNaN(heading) && speed > 2) opts.bearingHint = heading;
+    if (G.lastAt != null) opts.atHint = G.lastAt; // routes often pass the same road twice
+    const pr = project(g, S.cum, p, opts);
+    const tol = Math.max(45, Math.min(120, (accuracy || 0) * 1.5));
+    if (!pr || pr.dist > tol) {
+      G.next = null;
+      drive.offRoute();
+      setBanner(`<b>不在这条路线上</b><small>离路线约 ${fmtDist(pr?.dist ?? 0)}${accuracy > 50 ? ` · 定位精度 ±${Math.round(accuracy)} m` : ''}</small>`, true);
+      return;
+    }
+    at = pr.at;
   }
-  G.lastAt = pr.at;
+  // speed: from GPS when the phone reports it, else from progress along the route
+  let v = sim ? sim.v : speed;
+  if (!sim && (v == null || Number.isNaN(v))) {
+    const raw = G.lastAt != null && G.lastT != null && now > G.lastT ? Math.max(0, (at - G.lastAt) / (now - G.lastT)) : 0;
+    G.vEst = G.vEst == null ? raw : G.vEst * 0.6 + raw * 0.4;
+    v = G.vEst;
+  }
+  const jump = sim ? sim.jump : G.lastAt != null && Math.abs(at - G.lastAt) > 300;
+  G.lastAt = at; G.lastT = now;
+  drive.progress({ at, v: v || 0, t: now, jump });
+
   const total = S.cum[S.cum.length - 1];
-  const ahead = all().filter((a) => (a.level || 1) >= 2 && (a.at ?? 0) > pr.at + 5).sort((x, y) => x.at - y.at);
+  const ahead = all().filter((a) => (a.level || 1) >= 2 && (a.at ?? 0) > at + 5).sort((x, y) => x.at - y.at);
   G.next = ahead[0] || null;
-  const head = G.next ? `前方 ${fmtDist(G.next.at - pr.at)}：${esc(titleOf(G.next))}` : '前方没有注意点了';
-  const then = ahead[1] ? `再往后 ${fmtDist(ahead[1].at - pr.at)}：${esc(titleOf(ahead[1]))}` : '';
-  setBanner(`<b>${head}</b><small>起点后 ${fmtDist(pr.at)} / 全程 ${fmtDist(total)}${then ? ` · ${then}` : ''}</small>`);
+  const head = G.next ? `前方 ${fmtDist(G.next.at - at)}：${esc(titleOf(G.next))}` : '前方没有注意点了';
+  const then = ahead[1] ? `再往后 ${fmtDist(ahead[1].at - at)}：${esc(titleOf(ahead[1]))}` : '';
+  setBanner(`<b>${head}</b><small>${sim ? '模拟 · ' : ''}起点后 ${fmtDist(at)} / 全程 ${fmtDist(total)}${then ? ` · ${then}` : ''}</small>`);
 }
 
 function setBanner(html, off = false) {
@@ -530,7 +623,89 @@ async function keepAwake(on) {
     else if (!on) { await G.wake?.release(); G.wake = null; }
   } catch { /* not supported / denied */ }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && G.watch != null) keepAwake(true); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && (G.watch != null || G.sim)) keepAwake(true); });
+
+// ---------------- voice ----------------
+function toggleVoice() {
+  drive.setOn(!drive.on); // inside the tap: unlocks speech on mobile browsers
+  renderVoiceBtn();
+  if (!drive.on) return toast('语音已关闭');
+  if (!drive.speaker.supported) toast('这个浏览器不支持语音合成，只显示字幕', 'err', 4000);
+  else if (!drive.active) toast('英文考官语音已打开：点「定位」开始练车，或点「模拟」在家预演', 'ok', 4500);
+  else toast('英文考官语音已打开', 'ok');
+}
+
+function renderVoiceBtn() {
+  const b = $('#btn-voice');
+  if (!b) return;
+  b.classList.toggle('on', drive.on);
+  b.innerHTML = `${drive.on ? UI.speaker : UI.speakerOff}<span>语音</span>`;
+}
+
+// ---------------- simulated drive (rehearse the route at home) ----------------
+function startSim() {
+  const g = S.route?.route?.geometry;
+  if (!g?.length) return toast('这条路线还没有生成', 'err');
+  stopLocate();
+  drive.speaker.unlock();
+  const plan = drive.begin();
+  if (!plan) return;
+  if (S.selected) closeDetail();
+  G.first = true; G.follow = true; G.lastAt = null; G.lastT = null;
+  G.sim = new Simulator({ plan, geometry: g, onTick: onSimTick, onEnd: renderSimBar, busy: () => drive.busy() });
+  $('#sim-bar').classList.remove('hidden');
+  $('#btn-sim')?.classList.add('on');
+  keepAwake(true);
+  if (!isWide()) setSheet('peek');
+  if (!drive.on) toast('「语音」是关着的：现在只显示位置。点「语音」听考官指令。', '', 4500);
+  G.sim.play();
+}
+
+function stopSim() {
+  if (!G.sim) return;
+  G.sim.pause();
+  G.sim = null;
+  drive.end();
+  removeCar();
+  keepAwake(false);
+  setBanner(null);
+  $('#sim-bar').classList.add('hidden');
+  $('#btn-sim')?.classList.remove('on');
+}
+
+function onSimTick(s) {
+  if (!G.sim) return;
+  showCar(s.p, 6);
+  updateProgress(s.p, s.heading, s.v, 6, s);
+  renderSimBar();
+}
+
+function renderSimBar() {
+  const sim = G.sim;
+  if (!sim) return;
+  const play = $('#sim-play');
+  play.innerHTML = sim.playing ? UI.pause : UI.play;
+  play.setAttribute('aria-label', sim.playing ? '暂停' : '继续');
+  $('#sim-speed').textContent = `${sim.mult}×`;
+  const r = $('#sim-pos');
+  r.max = String(Math.round(sim.total));
+  if (document.activeElement !== r) r.value = String(Math.round(sim.at));
+  const state = sim.playing ? ` · ${Math.round(sim.v * 2.237)} mph` : ' · 已暂停';
+  $('#sim-info').textContent = `${fmtDist(sim.at)} / ${fmtDist(sim.total)}${state}`;
+}
+$('#sim-play').onclick = () => {
+  if (!G.sim) return;
+  if (G.sim.playing) G.sim.pause(); else { drive.speaker.unlock(); G.sim.play(); }
+  renderSimBar();
+};
+$('#sim-speed').onclick = () => {
+  if (!G.sim) return;
+  const steps = [1, 2, 4, 8];
+  G.sim.setMult(steps[(steps.indexOf(G.sim.mult) + 1) % steps.length]);
+  renderSimBar();
+};
+$('#sim-pos').oninput = (e) => { if (G.sim) { G.follow = true; G.sim.seek(+e.target.value); } };
+$('#sim-close').onclick = stopSim;
 
 // ---------------- install & offline ----------------
 let installEvt = null;

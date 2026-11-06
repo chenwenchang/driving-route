@@ -9,6 +9,7 @@ import { fetchRoute } from './core/osrm.js';
 import { autoDetect, mergeAuto, reproject } from './core/analyze.js';
 import { buildTimeline } from './core/timeline.js';
 import { buildInstructions, ARROW } from './core/instructions.js';
+import { voicePlaceholder } from './core/examiner.js';
 import { roundaboutAdvice, lanesText, DIR_ZH } from './core/roundabout.js';
 import { googleMapsParts, toGPX, toKML, toGeoJSON, safeFileName } from './core/exporters.js';
 import { createMap, RouteLayer, AnnotationLayer, CarMarker } from './ui/mapkit.js';
@@ -109,7 +110,7 @@ function refreshDerived() {
 
 const snapshot = () => JSON.stringify({
   waypoints: E.route.waypoints, annotations: E.route.annotations, dismissed: E.route.dismissed || [],
-  route: E.route.route, video: E.route.video, notes: E.route.notes,
+  route: E.route.route, video: E.route.video, notes: E.route.notes, voice: E.route.voice || {},
 });
 function pushUndo() { E.undo.push(snapshot()); if (E.undo.length > 80) E.undo.shift(); E.redo = []; }
 function change(fn, { reroute = false } = {}) {
@@ -410,6 +411,8 @@ function annEditorHtml(a) {
     <label class="field">标题<input type="text" data-f="title" value="${esc(a.title || '')}" placeholder="${esc(defaultTitle(a))}"></label>
     ${special}
     <label class="field">备注（易错点、教练提醒、视频里看到的细节）<textarea data-f="note" rows="3">${esc(a.note || '')}</textarea></label>
+    <label class="field">语音（英文，可选；留空用默认）<input type="text" lang="en-GB" data-f="say" value="${esc(a.say || '')}" placeholder="${esc(voicePlaceholder(a))}"></label>
+    ${['roundabout', 'manoeuvre'].includes(a.type) ? '' : `<label class="check small"><input type="checkbox" data-f="sayAsExaminer" ${a.sayAsExaminer ? 'checked' : ''}> 这是考官说的话（模拟考试模式也播；不勾选则只在练习模式作为提示）</label>`}
     <div class="row small"><span class="muted">视频时间</span><input type="text" class="mono" style="width:84px" data-f="t" value="${t != null ? fmtTime(t) : ''}" placeholder="mm:ss">
       <button class="btn sm" data-a="t-now" title="T">设为当前</button><button class="btn sm" data-a="t-go" ${t == null ? 'disabled' : ''}>跳转</button></div>
     <div class="img-slot" data-drop>${img}</div>
@@ -437,13 +440,29 @@ function wpHtml() {
 }
 
 function stepsHtml() {
-  const ins = buildInstructions(E.route);
+  const ins = buildInstructions(E.route, { keepMuted: true });
   if (!ins.length) return '<div class="empty small">路线生成后显示指令</div>';
-  return `<div class="items">${ins.map((s, i) => {
+  const head = `<p class="small muted">考官会说的话（英文语音按这个顺序播报）。可以把自动生成的句子改成视频里考官的原话；不需要的指令点 ${UI.speaker} 静音。</p>`;
+  const warn = E.route.route?.sideRoads ? '' : '<div class="warn-box small">还没运行过「自动识别」：判断 "next road / second road" 时会把小路、停车场入口也算进去。运行一次自动识别会准确很多。</div>';
+  return head + warn + `<div class="items">${ins.map((s, i) => {
     const t = E.timeline.timeAt(s.at);
-    return `<div class="item" data-step="${i}"><div class="wp" style="margin:auto;background:${s.icon === ARROW.roundabout ? '#1565c0' : '#455a64'}">${esc(s.icon)}</div>
-      <div style="min-width:0"><b>${esc(s.zh)}</b><small><i>${esc(s.en)}</i></small></div><div class="r">${fmtDist(s.at)}${t != null ? `<br>≈${fmtTime(t)}` : ''}</div></div>`;
+    const early = s.sayAt != null && s.at - s.sayAt >= 10 ? `<br>提前 ${fmtDist(s.at - s.sayAt)}` : '';
+    const edit = s.key
+      ? `<div class="voice-edit"><input type="text" data-voice="${esc(s.key)}" value="${esc(s.custom ? s.en : '')}" placeholder="${esc(s.auto || s.en)}" title="改成视频里考官的原话；留空就用自动生成的句子">
+          <button class="btn sm icon ${s.muted ? 'danger' : 'ghost'}" data-vmute="${esc(s.key)}" title="${s.muted ? '已静音，点一下恢复' : '静音这条指令'}">${s.muted ? UI.speakerOff : UI.speaker}</button></div>`
+      : `<small><i>${esc(s.en)}</i></small>`;
+    return `<div class="item ${s.muted ? 'muted-row' : ''}" data-step="${i}"><div class="wp" style="margin:auto;background:${s.icon === ARROW.roundabout ? '#1565c0' : '#455a64'}">${esc(s.icon)}</div>
+      <div style="min-width:0"><b>${esc(s.zh)}${s.road ? ` <span class="faint">· ${esc(s.road)}</span>` : ''}</b>${edit}</div><div class="r">${fmtDist(s.at)}${t != null ? `<br>≈${fmtTime(t)}` : ''}${early}</div></div>`;
   }).join('')}</div>`;
+}
+
+/** User override of the examiner's words at one junction: {say?, mute?}. */
+function setVoice(key, patch) {
+  const all = (E.route.voice ??= {});
+  const v = { ...(all[key] || {}), ...patch };
+  if (!v.say?.trim()) delete v.say;
+  if (!v.mute) delete v.mute;
+  if (Object.keys(v).length) all[key] = v; else delete all[key];
 }
 
 function infoHtml() {
@@ -490,9 +509,14 @@ sideBody.addEventListener('click', async (e) => {
   if (wpnow) { const w = findWp(wpnow.dataset.wpnow); const t = currentTime(); if (w && t != null) change(() => { w.t = t; }); return; }
   const wpRow = e.target.closest('[data-wp]');
   if (wpRow && !e.target.closest('input')) return select('wp', wpRow.dataset.wp, { seek: true });
+  const vm = e.target.closest('[data-vmute]');
+  if (vm) {
+    const key = vm.dataset.vmute;
+    return change(() => setVoice(key, { mute: !E.route.voice?.[key]?.mute }));
+  }
   const st = e.target.closest('[data-step]');
-  if (st) {
-    const s = buildInstructions(E.route)[+st.dataset.step];
+  if (st && !e.target.closest('input')) {
+    const s = buildInstructions(E.route, { keepMuted: true })[+st.dataset.step];
     if (!s) return;
     map.panTo(s.loc);
     const t = E.timeline.timeAt(s.at);
@@ -504,21 +528,25 @@ sideBody.addEventListener('click', async (e) => {
 });
 
 // text inputs: live update without re-render (keeps focus); one undo step per field edit
-sideBody.addEventListener('focusin', (e) => { if (e.target.matches('[data-f], [data-info], [data-wpt]')) pushUndo(); });
+sideBody.addEventListener('focusin', (e) => { if (e.target.matches('[data-f], [data-info], [data-wpt], [data-voice]')) pushUndo(); });
 sideBody.addEventListener('input', (e) => {
   const a = selAnn();
   const f = e.target.dataset.f;
-  if (a && (f === 'title' || f === 'note')) { a[f] = e.target.value; if (a.auto) a.edited = true; markDirty(); }
+  if (a && (f === 'title' || f === 'note' || f === 'say')) { a[f] = e.target.value; if (a.auto) a.edited = true; markDirty(); }
   const info = e.target.dataset.info;
   if (info === 'notes') { E.route.notes = e.target.value; markDirty(); }
   if (info === 'vtitle') { E.route.video.title = e.target.value; markDirty(); }
+  const vk = e.target.dataset.voice;
+  if (vk) { setVoice(vk, { say: e.target.value }); markDirty(); }
 });
 sideBody.addEventListener('change', (e) => {
   const a = selAnn();
   const f = e.target.dataset.f;
+  if (e.target.dataset.voice) return renderSide(); // a custom line can split a combined instruction
   if (a && f) {
     if (f === 'type') { a.type = e.target.value; a.level = Math.max(a.level || 1, 1); if (a.type === 'roundabout' && !a.rb) a.rb = synthRb(2, 12); if (a.type === 'speed' && !a.speed) a.speed = 30; }
     else if (f === 'speed' || f === 'prevSpeed') a[f] = e.target.value ? +e.target.value : null;
+    else if (f === 'sayAsExaminer') a.sayAsExaminer = e.target.checked;
     else if (f === 't') { const t = parseTime(e.target.value); a.t = t; }
     else if (f === 'rb.exit' || f === 'rb.clock') {
       const exit = Math.max(1, Math.min(8, +$('[data-f="rb.exit"]').value || 1));
@@ -741,7 +769,11 @@ $('#btn-auto').onclick = async () => {
   try {
     const res = await autoDetect(E.route, { onStatus: status });
     let m;
-    change(() => { m = mergeAuto(E.route, res.annotations); E.route.annotations = m.annotations; });
+    change(() => {
+      m = mergeAuto(E.route, res.annotations);
+      E.route.annotations = m.annotations;
+      if (res.sideRoads) E.route.route.sideRoads = res.sideRoads; // for "next / second road on the left"
+    });
     if (res.osmError) toast(`OSM 数据获取失败（${res.osmError}），只识别了环岛和车道。稍后可以再试一次。`, 'err', 7000);
     toast(`自动识别完成：新增 ${m.added}，更新 ${m.updated}，移除 ${m.removed}${m.kept ? `，保留 ${m.kept} 个已编辑的旧点` : ''}`, 'ok', 5000);
     E.annFilter = 'todo';

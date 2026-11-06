@@ -40,7 +40,17 @@
         <div class="grow ellipsis"><b id="route-title" class="ellipsis"></b><small id="route-sub" class="ellipsis"></small></div>
         <button class="btn icon ghost" id="btn-fit" title="显示整条路线" aria-label="显示整条路线"></button>
       </header>
-      <button class="gps-banner hidden" id="gps-banner" type="button" aria-live="polite"></button>
+      <div class="hud">
+        <button class="gps-banner hidden" id="gps-banner" type="button" aria-live="polite"></button>
+        <div class="caption hidden" id="caption" aria-live="assertive"></div>
+      </div>
+      <div class="sim-bar hidden" id="sim-bar" role="group" aria-label="模拟行驶">
+        <button class="btn icon" id="sim-play" type="button" aria-label="暂停"></button>
+        <button class="btn sm" id="sim-speed" type="button" title="播放速度">2×</button>
+        <input type="range" id="sim-pos" min="0" max="1000" step="1" value="0" aria-label="位置">
+        <span class="sim-info small" id="sim-info"></span>
+        <button class="btn icon ghost" id="sim-close" type="button" aria-label="结束模拟">✕</button>
+      </div>
       <section id="sheet" class="sheet" data-state="half" aria-label="路线信息">
         <div class="sheet-handle" id="sheet-handle" role="button" aria-label="拖动调整面板高度"><span></span></div>
         <nav class="sheet-tabs" id="sheet-tabs">
@@ -65,6 +75,24 @@
       <label class="field">GPX 航点语言（OsmAnd 语音播报会读航点名）
         <select id="set-gpx"><option value="zh">中文</option><option value="en">English</option></select>
       </label>
+      <div class="opt"><h4>语音播报（英文，模仿路考考官）</h4>
+        <label class="field">模式
+          <select id="set-vmode">
+            <option value="mock">模拟考试：只有考官指令，和真实考试一样</option>
+            <option value="practice">练习：考官指令 + 英文提示（环岛车道/打灯、限速、盲区…）</option>
+          </select>
+        </label>
+        <label class="field">练习模式提示哪些点
+          <select id="set-vtips"><option value="3">只提示易错点</option><option value="2">注意 + 易错（推荐）</option><option value="1">全部</option></select>
+        </label>
+        <label class="field">声音（建议选英国英语 en-GB）<select id="set-voice"></select></label>
+        <label class="field">语速
+          <select id="set-vrate"><option value="0.85">慢</option><option value="1">正常</option><option value="1.15">快</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="set-vshowme"> 途中问一个 "Show me" 问题（真实考试会问）</label>
+        <label class="check"><input type="checkbox" id="set-vchime"> 英文提示前"叮"一声（和考官指令区分开）</label>
+        <div class="row wrap"><button class="btn sm" id="set-vtest" type="button">试听</button><span class="small muted" id="set-vinfo"></span></div>
+      </div>
       <label class="field">Google 街景内嵌 API Key（可选，不填则点"街景"跳转 Google 地图）
         <input type="password" id="set-svkey" placeholder="Maps Embed API key" autocomplete="off">
       </label>

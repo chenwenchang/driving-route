@@ -26,6 +26,7 @@ export function describe(a, route) {
 /** Short phrase for navigation-app voice prompts. */
 export function spoken(a, lang = 'zh') {
   if (lang === 'en') {
+    if (a.say?.trim()) return a.say.trim();
     if (a.type === 'speed' && a.speed) return `Speed limit ${a.speed}`;
     if (a.type === 'roundabout' && a.rb) {
       const lane = a.rb.rule === 'right' ? 'right lane' : 'left lane';

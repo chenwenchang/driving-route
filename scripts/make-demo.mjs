@@ -38,6 +38,10 @@ for (const w of route.route.warnings) console.log('  ⚠', w.msg, w.at);
 
 const res = await autoDetect(route);
 if (res.osmError) console.log('OSM error:', res.osmError);
+if (res.sideRoads) {
+  route.route.sideRoads = res.sideRoads;
+  console.log('side roads:', res.sideRoads.length, '(', res.sideRoads.filter((s) => s.ok).length, 'ok )');
+}
 const merged = mergeAuto(route, res.annotations);
 route.annotations = merged.annotations;
 console.log('annotations:', route.annotations.length, 'added', merged.added);

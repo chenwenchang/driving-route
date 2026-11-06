@@ -54,8 +54,11 @@
 - **导出**：Google Maps 分段导航链接、GPX（OsmAnd）、KML（My Maps）、路线包（备份或传到手机）。
 
 ### L2 进阶版：练车时用起来
-- 部署到 HTTPS（GitHub Pages / Cloudflare Pages）。部署后手机可以"安装应用"、离线使用、调用 GPS。
-- 驾驶提示模式：手机固定在支架上，GPS 对准路线，快到注意点时语音提醒（例如"前方 200 米环岛，第 3 出口，走右道"）。
+- ✅ 部署到 HTTPS（GitHub Pages / Cloudflare Pages）。部署后手机可以"安装应用"、离线使用、调用 GPS。
+- ✅ 英文考官语音（模仿英国路考）：手机固定在支架上，GPS 对准路线，在合适的距离说出考官指令（"Take the second road on the left, please"、"At the roundabout, take the third exit"）。
+  - 模拟考试模式只有考官指令；练习模式另加英文提示：环岛车道和打灯、过了前一个出口时 "Signal left now"、限速、盲区等。
+  - 在家可以"模拟行驶"预演整条路线。
+  - 编辑器里能把每条指令改成视频里考官的原话，或者静音。
 - 环岛图鉴：汇总所有路线经过的环岛，列出每个环岛的各种进出组合。
 - 全局易错点地图：叠加所有路线的注意点，按出现频率排序。
 - 打包 APK：用 Capacitor，在本机装 JDK + Android SDK，或者用 GitHub Actions 在云端打包。

@@ -1,13 +1,16 @@
 // Auto-detection of attention points along a route (OSM + OSRM data), and
 // merging fresh results with the user's existing annotations.
-import { bearingAt, cumulative, pointAt, project, round6, segmentIndexAt } from './geo.js';
+import { angleDiff, bearing, bearingAt, cumulative, pointAt, project, round6, segmentIndexAt } from './geo.js';
 import { appliesToDirection, buildSegments, busLeft, crossingKind, cycleLeft, fetchOsmContext, segMaxspeed } from './osm.js';
 import { collectIntersections, describeRoundabout, findRoundabouts, lanesText } from './roundabout.js';
 import { TYPES, uid } from './model.js';
 
 const NON_TURN = new Set(['depart', 'arrive', 'roundabout', 'rotary', 'roundabout turn', 'exit roundabout', 'exit rotary', 'notification']);
 
-/** Fetch OSM context and detect features. Returns {annotations, osmError, stats}. */
+/**
+ * Fetch OSM context and detect features.
+ * Returns {annotations, sideRoads, osmError}; store sideRoads in route.route.sideRoads.
+ */
 export async function autoDetect(route, opts = {}) {
   const r = route.route;
   if (!r?.geometry?.length) throw new Error('请先生成路线');
@@ -20,7 +23,56 @@ export async function autoDetect(route, opts = {}) {
     osmError = e.message || String(e);
   }
   const annotations = detectFeatures(r, ctx, seg);
-  return { annotations, osmError };
+  return { annotations, sideRoads: detectSideRoads(r, ctx, seg), osmError };
+}
+
+const ROAD_HW = /^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|road)(_link)?$/;
+const CLOSED = /^(no|private)$/;
+
+function onewayDir(t) {
+  if (t.oneway === '-1' || t.oneway === 'reverse') return -1;
+  if (['yes', 'true', '1'].includes(t.oneway)) return 1;
+  if (t.oneway === 'no') return 0;
+  return ['roundabout', 'circular'].includes(t.junction) || t.highway === 'motorway' ? 1 : 0;
+}
+
+/**
+ * Roads joining the route on the left/right, for the examiner's "take the second
+ * road on the left". ok = a public road you could turn into; amb = a road a
+ * learner might count but couldn't take (no entry, private). Driveways, car-park
+ * entrances and paths are not counted, as on the test.
+ * @returns {{at, side, ok, amb?, hw, name?}[] | null}
+ */
+export function detectSideRoads(r, ctx, seg) {
+  if (!ctx || !seg || !r.nodes?.length) return null;
+  const geom = r.geometry, nodes = r.nodes;
+  const cum = cumulative(geom);
+  const out = [];
+  for (let i = 1; i < geom.length - 1; i++) {
+    const ws = seg.nodeWays.get(nodes[i]);
+    if (!ws || ws.length < 2) continue;
+    const mine = new Set([seg.segs[i - 1]?.way?.id, seg.segs[i]?.way?.id]);
+    const inBrg = bearing(pointAt(geom, cum, Math.max(0, cum[i] - 15)), geom[i]);
+    for (const w of ws) {
+      const t = w.tags;
+      if (mine.has(w.id) || !w.geom || !ROAD_HW.test(t.highway || '') || ['roundabout', 'circular'].includes(t.junction)) continue;
+      const open = !CLOSED.test(t.access || '') && !CLOSED.test(t.motor_vehicle || t.motorcar || t.vehicle || '');
+      const ow = onewayDir(t);
+      w.nodes.forEach((nid, k) => {
+        if (nid !== nodes[i]) return;
+        for (const kk of [k - 1, k + 1]) {
+          const nb = w.geom[kk];
+          if (!nb) continue;
+          const rel = angleDiff(bearing(geom[i], nb), inBrg);
+          if (Math.abs(rel) < 25 || Math.abs(rel) > 155) continue; // carries straight on / leads back
+          const entry = ow === 0 || (ow === 1) === (kk > k);
+          const ok = entry && open;
+          out.push({ at: Math.round(cum[i]), side: rel < 0 ? 'left' : 'right', ok, ...(ok ? {} : { amb: true }), hw: t.highway, ...(t.name || t.ref ? { name: t.name || t.ref } : {}) });
+        }
+      });
+    }
+  }
+  return out;
 }
 
 export function detectFeatures(r, ctx, seg) {

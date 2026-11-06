@@ -91,3 +91,9 @@ kbd { font: 600 11px/1 var(--mono); padding: 2px 4px; border-radius: 4px; border
 .keys { border-collapse: collapse; font-size: 13px; }
 .keys td { padding: 4px 8px 4px 0; vertical-align: top; }
 .info-form { display: grid; gap: 10px; }
+
+/* instruction list: examiner's words can be replaced or muted */
+.voice-edit { display: flex; gap: 4px; align-items: center; margin-top: 4px; }
+.voice-edit input { font-size: 12.5px; padding: 4px 8px; font-style: italic; }
+.voice-edit .btn svg { width: 16px; height: 16px; }
+.item.muted-row b, .item.muted-row .voice-edit input { opacity: .5; text-decoration: line-through; }

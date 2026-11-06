@@ -17,7 +17,8 @@ const sleep = (ms, signal) => new Promise((res, rej) => {
 export async function fetchOsmContext(route, { signal, fetchImpl = fetch, onStatus } = {}) {
   const ids = [...new Set((route.nodes || []).filter((n) => Number.isSafeInteger(n) && n > 0))];
   if (!ids.length) throw new Error('路线缺少 OSM 节点数据（请重新计算路线）');
-  const q = `[out:json][timeout:90];node(id:${ids.join(',')})->.r;node.r(if:count_tags()>0);out body;way(bn.r)[~"^(highway|railway)$"~"."];out body;`;
+  // ways come with geometry so side roads can be placed left/right of the route
+  const q = `[out:json][timeout:90];node(id:${ids.join(',')})->.r;node.r(if:count_tags()>0);out body;way(bn.r)[~"^(highway|railway)$"~"."];out geom;`;
   const body = 'data=' + encodeURIComponent(q);
   let lastErr;
   // first endpoint gets retries on rate-limit (429) / overload (504); mirrors are fallbacks
@@ -51,7 +52,10 @@ export function parseOverpass(j) {
   const ways = new Map();
   for (const e of j.elements || []) {
     if (e.type === 'node') nodes.set(e.id, { id: e.id, lat: e.lat, lon: e.lon, tags: e.tags || {} });
-    else if (e.type === 'way') ways.set(e.id, { id: e.id, nodes: e.nodes || [], tags: e.tags || {} });
+    else if (e.type === 'way') {
+      const geom = Array.isArray(e.geometry) ? e.geometry.map((g) => (g ? [g.lat, g.lon] : null)) : null;
+      ways.set(e.id, { id: e.id, nodes: e.nodes || [], tags: e.tags || {}, geom });
+    }
   }
   return { nodes, ways };
 }
