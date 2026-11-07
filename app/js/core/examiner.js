@@ -7,7 +7,7 @@
 // exit"). Road names are never spoken: examiners don't use them.
 import { angleDiff, cumulative, haversine, norm360, pointAt } from './geo.js';
 import { CENTRE, titleOf } from './model.js';
-import { collectIntersections, ordinalEn, ordinalZh, DIR_ZH } from './roundabout.js';
+import { collectIntersections, isLargeRoundabout, ordinalEn, ordinalZh, DIR_ZH } from './roundabout.js';
 
 const SIDE_ZH = { left: '左', right: '右' };
 const RB_STEP = new Set(['roundabout', 'rotary', 'roundabout turn']);
@@ -121,7 +121,10 @@ export function buildManeuvers(route, cum = null) {
       return;
     }
     if (NO_DIRECTION.has(s.type) || inRb(s.at)) return;
-    if (!s.name && !s.ref && (s.dist ?? 99) < 40) return; // car-park aisles, service roads
+    const unnamed = !s.name && !s.ref;
+    if (unnamed && (s.dist ?? 99) < 40) return; // car-park aisles, service roads
+    const prev = steps[k - 1];
+    if (unnamed && prev && !prev.name && !prev.ref) return; // driving around inside a car park
     const c = classifyStep(s, junctionShape(s.ints?.[0]), lights.some((x) => x >= s.at - 40 && x <= s.at + 5));
     if (!c) return;
     list.push({ ...c, at: s.at, end: s.at, loc: s.loc, road: s.name || s.ref || '', dest: s.dest || '', key: junctionKey(s.loc) });
@@ -189,8 +192,11 @@ export function directionText(m, n = 0, { chain = false } = {}) {
       ? { core: `Take the next slip road, signposted ${speakDest(m.dest)}`, zh: `从下一个匝道驶出（${m.dest}）` }
       : { core: `Leave at the next slip road on the ${s}`, zh: '从下一个匝道驶出' };
     case 'rb': {
-      const ord = ordinalEn(m.exit), zh = `环岛${ordinalZh(m.exit)}出口（${DIR_ZH[m.dir] || '直行'}）`;
-      if (m.dir === 'ahead' && !chain) return { core: `At the roundabout, follow the road ahead. That's the ${ord} exit`, zh, plain: true };
+      const ord = ordinalEn(m.exit);
+      const large = isLargeRoundabout(m.rb);
+      const zh = large ? `环岛${ordinalZh(m.exit)}出口` : `环岛${ordinalZh(m.exit)}出口（${DIR_ZH[m.dir] || '直行'}）`;
+      // "follow the road ahead" only where ahead is obvious: big interchanges get the exit number
+      if (m.dir === 'ahead' && !chain && m.exit <= 2 && !large) return { core: `At the roundabout, follow the road ahead. That's the ${ord} exit`, zh, plain: true };
       return { core: `At the roundabout, take the ${ord} exit`, zh };
     }
     case 'mini': {
@@ -211,6 +217,12 @@ function thenText(m, n, prev) {
   if (m.kind === 'end') return { en: `turn ${m.side}${again} at the end of the road`, zh: `路尽头再${sz}转` };
   if (m.kind === 'lights') return { en: `turn ${m.side}${again} at the traffic lights`, zh: `红绿灯路口${sz}转` };
   if (m.kind === 'rb') return { en: `at the next roundabout, take the ${ordinalEn(m.exit)} exit`, zh: `下一个环岛${ordinalZh(m.exit)}出口` };
+  if (m.kind === 'mini') {
+    const what = m.dir === 'left' || m.dir === 'right' ? `turn ${m.dir}` : m.dir === 'ahead' ? 'follow the road ahead' : `take the ${ordinalEn(m.exit)} exit`;
+    const zh = `下一个小环岛${DIR_ZH[m.dir] || ''}`;
+    if (prev?.kind === 'mini' && prev.dir === m.dir) return { en: `${what} again at the next mini-roundabout`, zh };
+    return { en: `at the ${prev?.kind === 'mini' ? 'next ' : ''}mini-roundabout, ${what}`, zh };
+  }
   const t = directionText(m, n, { chain: true });
   return { en: t.core.charAt(0).toLowerCase() + t.core.slice(1), zh: t.zh };
 }
@@ -240,6 +252,12 @@ export function roundaboutCoach(m) {
   const rule = rb.rule || (exit === 1 ? 'first' : m.dir === 'right' || m.dir === 'uturn' ? 'right' : 'intermediate');
   const say = m.ann?.say?.trim();
   if (say) return { en: say, zh: '（自定义提示）' };
+  if (isLargeRoundabout(rb)) {
+    const ord = ordinalEn(exit);
+    const sig = exit > 1 ? 'Signal left after you pass the exit before yours.' : 'Signal left as you approach.';
+    const lights = rb.signalised ? 'Watch the traffic lights on the roundabout.' : 'Give way to traffic from the right.';
+    return { en: `Follow the lane arrows for the ${ord} exit. ${sig} ${lights}`, zh: `大型立交环岛：按地面箭头选第 ${exit} 出口的车道；${exit > 1 ? `过了第 ${exit - 1} 出口再打左灯` : '进环岛前打左灯'}；${rb.signalised ? '注意环岛内的红绿灯' : '让右侧来车'}` };
+  }
   const lane = laneAdvice(rb.lanes) || (rule === 'right' ? 'Right-hand lane.' : 'Left-hand lane.');
   if (m.kind === 'mini') {
     const sig = m.dir === 'left' ? 'Signal left.' : m.dir === 'right' || m.dir === 'uturn' ? 'Signal right.' : 'No signal needed.';

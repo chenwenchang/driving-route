@@ -196,14 +196,26 @@ export function lanesText(lanes) {
   return `地图车道数据：共 ${n} 道，可走${which}`;
 }
 
+/**
+ * Big multi-lane interchange (e.g. the A14 junctions at Histon, Milton, Quy): the slip
+ * roads leave at odd angles, so the clock rule says little — the lane arrows decide.
+ */
+export function isLargeRoundabout(rb) {
+  if (!rb || rb.kind === 'mini') return false;
+  return rb.kind === 'rotary' || (rb.radius ?? 0) > 45 || /interchange|gyratory/i.test(rb.name || '') || ((rb.toAt ?? 0) - (rb.fromAt ?? 0)) > 150;
+}
+
 export function roundaboutAdvice(rb) {
   const n = rb.exit;
-  const kindZh = rb.kind === 'mini' ? '小环岛' : '环岛';
-  const head = `${kindZh}${ordinalZh(n)}出口 · 约 ${rb.clock} 点钟方向（${DIR_ZH[rb.dir]}）`;
-  const clockLine = `约 ${rb.clock} 点钟方向 · ${DIR_ZH[rb.dir]}${rb.rule === 'right' ? ' · 走右道' : ' · 走左道'}`;
+  const large = isLargeRoundabout(rb);
+  const kindZh = rb.kind === 'mini' ? '小环岛' : large ? '大型立交环岛' : '环岛';
+  const head = large ? `${kindZh} · ${ordinalZh(n)}出口` : `${kindZh}${ordinalZh(n)}出口 · 约 ${rb.clock} 点钟方向（${DIR_ZH[rb.dir]}）`;
+  const clockLine = large ? `${ordinalZh(n)}出口 · 按路牌和地面箭头选车道` : `约 ${rb.clock} 点钟方向 · ${DIR_ZH[rb.dir]}${rb.rule === 'right' ? ' · 走右道' : ' · 走左道'}`;
   const prev = n > 1 ? `经过第 ${n - 1} 出口后` : '';
   const lines = [];
-  if (rb.rule === 'first') {
+  if (large) {
+    lines.push(`多车道立交环岛：提前看蓝色路牌和地面箭头，选去第 ${n} 出口的车道；环岛内沿车道线走，不要随意变道。${n > 1 ? `${prev}打左灯` : '进环岛前打左灯'}，看左镜和左后盲区再驶出。`);
+  } else if (rb.rule === 'first') {
     lines.push('走左车道进入，进环岛前打左灯；环岛内靠左行驶，左灯一直打到驶出。');
   } else if (rb.rule === 'right') {
     lines.push(`走右车道进入，进环岛前打右灯；环岛内保持在右道（内侧）。${prev}改打左灯，看左镜和左后盲区，然后驶出。`);
@@ -217,7 +229,9 @@ export function roundaboutAdvice(rb) {
   lines.push('进入前看右侧来车，环岛内的车优先；有空档就果断进入。');
   if (rb.uncertain) lines.push(`⚠ 出口计数存疑（路网数据 ${rb.counted} vs 路由 ${n}），请对照视频确认。`);
 
-  const signalEn = rb.rule === 'first'
+  const signalEn = large
+    ? `Follow the lane arrows for exit ${n}; ${n > 1 ? `after passing exit ${n - 1}, ` : ''}signal left to exit.`
+    : rb.rule === 'first'
     ? 'Left lane, signal left on approach, keep signalling left to exit.'
     : rb.rule === 'right'
       ? `Right lane, signal right on approach; after passing exit ${n - 1}, signal left to exit.`

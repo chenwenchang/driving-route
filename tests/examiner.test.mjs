@@ -93,6 +93,19 @@ test('examiner: roundabout direction, coaching and "signal left now"', () => {
   assert.ok(sig && sig.sayAt >= 335 && sig.sayAt <= 345);
 });
 
+test('examiner: big interchanges get the exit number and lane-arrow coaching', () => {
+  const rb = { kind: 'rotary', name: 'Histon Interchange', exit: 3, dir: 'ahead', rule: 'intermediate', fromAt: 300, toAt: 520, radius: 72, lanes: null,
+    arms: [{ s: 188, no: 1 }, { s: 294, no: 2 }, { s: 359, no: 3, isExit: true }] };
+  const route = straightRoute({ turns: [{ at: 300, mod: 'straight', ahead: true }], annotations: [{ id: 'rb', type: 'roundabout', at: 300, lat: 0, lng: 0, level: 3, rb }] });
+  const practice = said(route, { mode: 'practice' });
+  assert.ok(practice.some((s) => s.en === 'At the roundabout, take the third exit, please.'));
+  const coach = practice.find((s) => s.kind === 'coach');
+  assert.match(coach.en, /^Follow the lane arrows for the third exit\. Signal left after you pass the exit before yours\./);
+  // a small roundabout straight across keeps the examiner's "follow the road ahead"
+  const small = straightRoute({ turns: [{ at: 300, mod: 'straight', ahead: true }], annotations: [{ id: 'rb', type: 'roundabout', at: 300, lat: 0, lng: 0, level: 3, rb: { ...rb, kind: 'roundabout', name: '', radius: 18, toAt: 340, exit: 2 } }] });
+  assert.ok(said(small).some((s) => s.en === "At the roundabout, follow the road ahead. That's the second exit."));
+});
+
 test('examiner: opening, arrival, mid-route start and practice tips', () => {
   const route = straightRoute({ annotations: [{ id: 'sp', type: 'speed', at: 200, speed: 20, prevSpeed: 30, lat: 0, lng: 0, level: 2 }] });
   const all = said(route, { mode: 'practice' });
