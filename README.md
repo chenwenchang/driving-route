@@ -84,12 +84,13 @@ npm start
   - 每句话同时在屏幕上显示英文字幕和中文意思。
 - **模拟**：在家预演。小车按限速沿路线开，你听考官指令、看位置，可以暂停、拖动、1×–8× 倍速。说话时会自动放慢，不会漏掉指令。
 
-**视频里的原话**：从有字幕的 YouTube 视频录入的路线，会保存视频里导航（TomTom）和考官说的每一句话和时间：
+**视频里的原话**：从 YouTube 视频录入的路线，会保存视频里导航（TomTom）和考官说的每一句话和时间。视频有字幕就用字幕；没有字幕，就下载音频，用 Whisper 语音识别转成文字。
 
 - 车开到视频里说这句话的地方，就播报同一句话。例如 "After 300 yards, go right on the roundabout and take the third exit, A14, towards Newmarket"。
 - 视频里停车的地方（靠边停车、侧方停车、倒车入库），模拟时也会停下来，等考官说完 "When you are ready, drive on" 再走。
 - 导航和考官用两个不同的声音。设置里可以选这两个声音，也可以换回自动生成的考官指令。
 - 视频时间按字幕对齐，地图上的小车和视频基本同步。
+- 新加一个视频：`npm run video-text -- <视频链接>` 取出视频里说的话（没有字幕时自动转写）。需要的工具和下载地址写在 [scripts/video/text.mjs](scripts/video/text.mjs) 开头；把这些话整理成路线的步骤，写在 [scripts/video/build-routes.mjs](scripts/video/build-routes.mjs) 开头。
 
 语音听起来太机器人时，换一个更自然的声音：
 

@@ -10,7 +10,9 @@
     "test": "node --test \"tests/*.test.mjs\"",
     "build": "node scripts/build.mjs",
     "preview": "node scripts/build.mjs && node server/server.mjs --dir dist --static --port 5174",
-    "vendor": "node scripts/vendor.mjs"
+    "vendor": "node scripts/vendor.mjs",
+    "video-text": "node scripts/video/text.mjs",
+    "video-routes": "node scripts/video/build-routes.mjs"
   },
   "devDependencies": {
     "leaflet": "^1.9.4"

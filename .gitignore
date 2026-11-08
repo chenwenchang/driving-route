@@ -12,3 +12,10 @@ app/data/media/
 app/data/trash/
 
 .claude/settings.local.json
+
+# Tools and downloads for reading what a route video says (scripts/video/text.mjs):
+# yt-dlp, Whisper models, downloaded audio and transcripts. scripts/video/data holds the
+# cleaned-up words of other people's videos and your route specs, so it stays local too.
+.tools/
+.cache/
+scripts/video/data/
