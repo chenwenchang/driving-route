@@ -175,13 +175,13 @@ test('video script: lines are said where they were said; parked lines wait for a
     { t: 60, who: 'examiner', text: "When you're ready, drive on.", ...here(0) },
     { t: 80, who: 'satnav', text: 'After 300 yards, turn left.', ...here(20) },
     { t: 95, who: 'examiner', text: "Pull up on the left when it's safe to do so, please.", ...here(150) },
-    { t: 110, who: 'examiner', text: 'Thank you. When you are ready, drive on.', ...here(160), wait: true },
+    { t: 110, who: 'examiner', text: 'Thank you. When you are ready, drive on.', ...here(160), wait: true, waitFor: 6 },
     { t: 130, who: 'satnav', text: 'Turn left.', ...here(280) },
   ];
   const plan = buildCuePlan(r, { mode: 'mock' });
   assert.ok(plan.script);
   assert.ok(!plan.cues.some((c) => c.kind === 'dir' || c.kind === 'open'));
-  assert.equal(plan.stops.length, 1);
+  assert.deepEqual(plan.stops.map((s) => s.dur), [12]); // the simulator stands there long enough
   const runner = new CueRunner(plan);
   const say = (o) => runner.update(o).map((c) => c.en);
   assert.deepEqual(say({ at: 0, v: 0, t: 0 }), ["When you're ready, drive on."]);
@@ -189,7 +189,8 @@ test('video script: lines are said where they were said; parked lines wait for a
   assert.equal(say({ at: 150, v: 10, t: 15 }).length, 1);
   assert.deepEqual(say({ at: 160, v: 5, t: 16 }), []); // still rolling: the parked line waits
   say({ at: 161, v: 0, t: 17 });
-  assert.deepEqual(say({ at: 161, v: 0, t: 20 }), ['Thank you. When you are ready, drive on.']);
+  assert.deepEqual(say({ at: 161, v: 0, t: 20 }), []); // stopped 3 s: in the video it came after 6 s
+  assert.deepEqual(say({ at: 161, v: 0, t: 23 }), ['Thank you. When you are ready, drive on.']);
   assert.deepEqual(say({ at: 279, v: 8, t: 40 }), ['Turn left.']);
   const rows = buildInstructions(r);
   assert.equal(rows.length, 5);

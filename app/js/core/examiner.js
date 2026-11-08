@@ -448,7 +448,7 @@ export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true
     if (c.kind !== 'script' || !c.wait) continue;
     const s = stops[stops.length - 1];
     if (s && Math.abs(c.at - s.at) < 30) s.dur = Math.max(s.dur, c.t - s.t0 + 6);
-    else stops.push({ at: c.at, t0: c.t, dur: 8 });
+    else stops.push({ at: c.at, t0: c.t - c.waitFor, dur: c.waitFor + 6 });
   }
   // expected speed (from speed-limit annotations) for previews and the instruction list
   const limits = anns.filter((a) => a.type === 'speed' && a.speed).sort((a, b) => a.at - b.at);
@@ -477,7 +477,9 @@ function scriptCues(route, geom, cum) {
     hint = at;
     out.push({
       id: `s${i}`, kind: 'script', who: s.who === 'satnav' ? 'satnav' : 'examiner', prio: 0, at, t: s.t,
-      wait: !!s.wait, hold: at < 5, until: at + 80, en: s.text, zh: s.zh || glossZh(s.text),
+      // how long the car had been standing when it was said (after the parking, not as it stops)
+      wait: !!s.wait, waitFor: s.wait ? clamp(s.waitFor ?? 2, 2, 20) : 0,
+      hold: at < 5, until: at + 80, en: s.text, zh: s.zh || glossZh(s.text),
     });
   });
   return out;
@@ -549,8 +551,9 @@ export class CueRunner {
       case 'script':
         if (at > c.until) return 'skip';
         if (at < c.at - 3) return false;
-        // said while the car stood still in the video ("When you are ready, drive on"): wait for a stop
-        if (c.wait && stopped < 2) return at > c.at + 40 ? 'skip' : false;
+        // said while the car stood still in the video ("When you are ready, drive on"): wait until the
+        // car has been stopped about as long as it had in the video
+        if (c.wait && stopped < c.waitFor) return at > c.at + 40 ? 'skip' : false;
         return say;
       case 'coach': {
         const w = waitParent();
