@@ -1,11 +1,12 @@
 // Video time <-> distance-along-route mapping, anchored on waypoints that have
-// a video timestamp. Linear interpolation by distance between anchors.
-import { cumulative } from './geo.js';
+// a video timestamp, plus route.timeAnchors ({t, lat, lng}: e.g. taken from the
+// video's captions). Linear interpolation by distance between anchors.
+import { cumulative, project } from './geo.js';
 
 export function buildTimeline(route, cum = null) {
   const r = route.route;
   const wps = route.waypoints || [];
-  if (!r?.geometry?.length || !wps.length) return emptyTimeline();
+  if (!r?.geometry?.length || (!wps.length && !route.timeAnchors?.length)) return emptyTimeline();
   cum = cum || cumulative(r.geometry);
   const last = r.geometry.length - 1;
   const anchors = [];
@@ -15,6 +16,14 @@ export function buildTimeline(route, cum = null) {
     if (idx == null) return;
     anchors.push({ at: cum[Math.min(idx, last)], t: w.t });
   });
+  // anchors stored by position survive re-routing; project them in time order
+  let hint = 0;
+  for (const a of [...(route.timeAnchors || [])].sort((x, y) => x.t - y.t)) {
+    const p = project(r.geometry, cum, [a.lat, a.lng], { atHint: hint, from: hint - 30 });
+    if (!p || p.dist > 40) continue;
+    anchors.push({ at: p.at, t: a.t });
+    hint = p.at;
+  }
   // keep anchors strictly increasing in both distance and time
   anchors.sort((a, b) => a.at - b.at);
   const clean = [];

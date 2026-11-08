@@ -97,3 +97,4 @@ kbd { font: 600 11px/1 var(--mono); padding: 2px 4px; border-radius: 4px; border
 .voice-edit input { font-size: 12.5px; padding: 4px 8px; font-style: italic; }
 .voice-edit .btn svg { width: 16px; height: 16px; }
 .item.muted-row b, .item.muted-row .voice-edit input { opacity: .5; text-decoration: line-through; }
+.item b.wrap-text { white-space: normal; overflow: visible; }

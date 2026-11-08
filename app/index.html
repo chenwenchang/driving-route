@@ -85,7 +85,14 @@
         <label class="field">练习模式提示哪些点
           <select id="set-vtips"><option value="3">只提示易错点</option><option value="2">注意 + 易错（推荐）</option><option value="1">全部</option></select>
         </label>
-        <label class="field">声音（建议选英国英语 en-GB）<select id="set-voice"></select></label>
+        <label class="field">指令用哪种说法
+          <select id="set-vsource">
+            <option value="auto">视频里的原话（导航 + 考官，有字幕的路线）</option>
+            <option value="generated">自动生成的考官指令</option>
+          </select>
+        </label>
+        <label class="field">考官的声音（建议选英国英语 en-GB）<select id="set-voice"></select></label>
+        <label class="field">导航的声音<select id="set-voice2"></select></label>
         <label class="field">语速
           <select id="set-vrate"><option value="0.85">慢</option><option value="1">正常</option><option value="1.15">快</option></select>
         </label>

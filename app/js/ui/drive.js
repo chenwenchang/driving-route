@@ -5,7 +5,8 @@ import { bearingAt, cumulative, pointAt } from '../core/geo.js';
 import { Speaker } from './speech.js';
 import { esc, settings } from './util.js';
 
-export const VOICE_DEFAULTS = { mode: 'mock', tips: 2, showMe: true, chime: true, rate: 1, voiceURI: '' };
+// source: 'auto' = the video's own words where the route has them, else generated directions
+export const VOICE_DEFAULTS = { mode: 'mock', tips: 2, showMe: true, chime: true, rate: 1, voiceURI: '', satnavVoiceURI: '', source: 'auto' };
 export const voiceSettings = () => ({ ...VOICE_DEFAULTS, ...settings.get('voice', {}) });
 export const saveVoiceSettings = (patch) => settings.set('voice', { ...voiceSettings(), ...patch });
 
@@ -24,7 +25,7 @@ export class DriveVoice {
 
   applySettings() {
     this.cfg = voiceSettings();
-    Object.assign(this.speaker, { rate: +this.cfg.rate || 1, chime: !!this.cfg.chime, voiceURI: this.cfg.voiceURI || '' });
+    Object.assign(this.speaker, { rate: +this.cfg.rate || 1, chime: !!this.cfg.chime, voiceURI: this.cfg.voiceURI || '', satnavVoiceURI: this.cfg.satnavVoiceURI || '' });
   }
 
   setRoute(route) {
@@ -38,7 +39,7 @@ export class DriveVoice {
   begin() {
     this.applySettings();
     const c = this.cfg;
-    this.plan = this.route ? buildCuePlan(this.route, { mode: c.mode, tipLevel: +c.tips || 2, showMe: !!c.showMe }) : null;
+    this.plan = this.route ? buildCuePlan(this.route, { mode: c.mode, tipLevel: +c.tips || 2, showMe: !!c.showMe, source: c.source }) : null;
     this.runner = this.plan ? new CueRunner(this.plan) : null;
     this.lastAt = null;
     this.off = false;
@@ -81,7 +82,7 @@ export class DriveVoice {
     if (!this.on) return due;
     for (const c of due) {
       const until = c.kind === 'dir' ? c.at - 2 : c.until;
-      this.speaker.say({ en: c.en, zh: c.zh, prio: c.prio, kind: c.kind, fresh: until == null ? null : () => (this.lastAt ?? 0) < until });
+      this.speaker.say({ en: c.en, zh: c.zh, prio: c.prio, kind: c.kind, who: c.who, hold: c.hold || c.wait, fresh: until == null ? null : () => (this.lastAt ?? 0) < until });
     }
     return due;
   }
@@ -90,7 +91,7 @@ export class DriveVoice {
   busy() {
     if (!this.on) return 0;
     const items = [this.speaker.current, ...this.speaker.queue].filter(Boolean);
-    if (items.some((x) => x.kind === 'open')) return 2;
+    if (items.some((x) => x.kind === 'open' || x.hold)) return 2; // opening words, or said while parked
     return items.length ? 1 : 0;
   }
 
@@ -101,19 +102,19 @@ export class DriveVoice {
   }
 
   /** Read one line now (instruction list preview, voice test). */
-  sayNow(en, zh = '') {
+  sayNow(en, zh = '', who = 'examiner') {
     this.applySettings();
     this.speaker.unlock();
     this.speaker.cancel();
-    this.speaker.say({ en, zh, prio: 0, kind: 'preview' });
+    this.speaker.say({ en, zh, prio: 0, kind: 'preview', who });
   }
 
   showCaption(it) {
     const el = this.captionEl;
     if (!el) return;
     clearTimeout(this.capTimer);
-    const who = it.kind === 'preview' ? '试听' : it.prio > 0 ? '提示' : '考官';
-    el.className = `caption ${it.prio > 0 ? 'tip' : 'exam'}`;
+    const who = it.kind === 'preview' ? '试听' : it.prio > 0 ? '提示' : it.who === 'satnav' ? '导航' : '考官';
+    el.className = `caption ${it.prio > 0 ? 'tip' : it.who === 'satnav' ? 'satnav' : 'exam'}`;
     el.innerHTML = `<span class="who">${who}</span><b lang="en-GB">${esc(it.en)}</b>${it.zh ? `<small>${esc(it.zh)}</small>` : ''}`;
   }
 
@@ -147,6 +148,10 @@ export class Simulator {
     this.playing = false;
     this.onTick = onTick;
     this.onEnd = onEnd;
+    // places where the car stood still in the video (pull-ups, parking exercises)
+    this.stops = [...(plan.stops || [])].sort((a, b) => a.at - b.at);
+    this.nextStop = 0;
+    this.hold = 0;
   }
 
   play() {
@@ -171,6 +176,9 @@ export class Simulator {
 
   seek(at) {
     this.at = Math.max(0, Math.min(this.total, at));
+    const i = this.stops.findIndex((s) => s.at > this.at + 1);
+    this.nextStop = i < 0 ? this.stops.length : i;
+    this.hold = 0;
     this.emit(true);
   }
 
@@ -179,9 +187,18 @@ export class Simulator {
     const busy = this.busy();
     const dt = Math.min(1, (now - this.last) / 1000) * (busy === 1 ? Math.min(1, this.mult) : this.mult);
     this.last = now;
-    if (busy === 2) { this.v = 0; this.emit(); return; } // waiting to "move off"
+    if (busy === 2 || this.hold > 0) { // standing still: opening words, a pull-up, a parking exercise
+      this.v = 0;
+      this.t += dt;
+      if (busy !== 2) this.hold -= dt;
+      this.emit();
+      return;
+    }
     this.v = simSpeedAt(this.plan, this.at);
-    this.at = Math.min(this.total, this.at + this.v * dt);
+    let next = Math.min(this.total, this.at + this.v * dt);
+    const stop = this.stops[this.nextStop];
+    if (stop && next >= stop.at) { next = stop.at; this.nextStop++; this.hold = Math.max(4, Math.min(stop.dur, 25)); }
+    this.at = next;
     this.t += dt;
     if (this.at >= this.total) {
       this.playing = false;

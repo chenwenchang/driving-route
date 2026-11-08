@@ -442,6 +442,13 @@ function wpHtml() {
 function stepsHtml() {
   const ins = buildInstructions(E.route, { keepMuted: true });
   if (!ins.length) return '<div class="empty small">路线生成后显示指令</div>';
+  if (ins.some((s) => s.kind === 'script')) {
+    // lines taken from the video's captions: click to hear it in the video
+    return `<p class="small muted">视频里导航和考官说的话（来自 YouTube 字幕），语音按这个播报。点一行，视频跳到说这句话的时刻，地图上的小车也会跳过去。</p>
+      <div class="items">${ins.map((s, i) => `<div class="item" data-step="${i}"><div class="wp" style="margin:auto;background:${s.who === 'satnav' ? '#1f9d6a' : '#455a64'}">${esc(s.icon)}</div>
+        <div style="min-width:0"><b class="wrap-text">${s.who === 'satnav' ? '导航' : '考官'} · ${esc(s.en)}</b><small>${esc(s.zh)}</small></div>
+        <div class="r">${s.t != null ? fmtTime(s.t) : ''}<br>${fmtDist(s.at)}</div></div>`).join('')}</div>`;
+  }
   const head = `<p class="small muted">考官会说的话（英文语音按这个顺序播报）。可以把自动生成的句子改成视频里考官的原话；不需要的指令点 ${UI.speaker} 静音。</p>`;
   const warn = E.route.route?.sideRoads ? '' : '<div class="warn-box small">还没运行过「自动识别」：判断 "next road / second road" 时会把小路、停车场入口也算进去。运行一次自动识别会准确很多。</div>';
   return head + warn + `<div class="items">${ins.map((s, i) => {
@@ -519,7 +526,7 @@ sideBody.addEventListener('click', async (e) => {
     const s = buildInstructions(E.route, { keepMuted: true })[+st.dataset.step];
     if (!s) return;
     map.panTo(s.loc);
-    const t = E.timeline.timeAt(s.at);
+    const t = s.t ?? E.timeline.timeAt(s.at);
     if (t != null) E.video?.seek(t);
     return;
   }

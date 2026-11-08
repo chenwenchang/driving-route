@@ -5,8 +5,9 @@
 // Phrasing follows the standard directions British driving examiners give
 // ("Take the next road on the left, please", "At the roundabout, take the third
 // exit"). Road names are never spoken: examiners don't use them.
-import { angleDiff, cumulative, haversine, norm360, pointAt } from './geo.js';
+import { angleDiff, cumulative, haversine, norm360, pointAt, project } from './geo.js';
 import { CENTRE, titleOf } from './model.js';
+import { glossZh } from './gloss.js';
 import { collectIntersections, isLargeRoundabout, ordinalEn, ordinalZh, DIR_ZH } from './roundabout.js';
 
 const SIDE_ZH = { left: '左', right: '右' };
@@ -340,7 +341,7 @@ export function pullUpText(a) {
  * mode 'mock' = examiner only (like the real test); 'practice' adds coaching.
  * tipLevel: minimum annotation level for coaching tips (1 all · 2 key · 3 hot spots).
  */
-export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true, rand = Math.random, keepMuted = false } = {}) {
+export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true, rand = Math.random, keepMuted = false, source = 'auto' } = {}) {
   const r = route.route;
   if (!r?.geometry?.length || r.geometry.length < 2) return null;
   const geom = r.geometry;
@@ -351,10 +352,12 @@ export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true
   const sides = sideRoadList(r, cum);
   const lights = anns.filter((a) => a.type === 'signals').map((a) => a.at);
   const voice = route.voice || {}; // user overrides per junction: {say, mute}
-  const cues = [{ id: 'open', kind: 'open', prio: 0, at: 0, en: OPENING.en, zh: OPENING.zh }];
+  // a route recorded from a video with captions carries what was actually said (route.script)
+  const useScript = source !== 'generated' && Array.isArray(route.script) && route.script.length > 0;
+  const cues = useScript ? scriptCues(route, geom, cum) : [{ id: 'open', kind: 'open', prio: 0, at: 0, en: OPENING.en, zh: OPENING.zh }];
 
   const dirs = [];
-  for (const m of ms) {
+  for (const m of useScript ? [] : ms) {
     const ov = voice[m.key] || {};
     if (ov.mute && !keepMuted) continue;
     dirs.push({
@@ -384,7 +387,9 @@ export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true
     for (const m of ms) {
       if (!isRb(m)) continue;
       const c = roundaboutCoach(m);
-      cues.push({ id: `${m.id}:coach`, kind: 'coach', prio: 1, at: m.at, after: m.id, until: m.at - 3, en: c.en, zh: c.zh });
+      // after the examiner's direction; with a video script there is no generated direction to follow
+      if (useScript) cues.push({ id: `${m.id}:coach`, kind: 'tip', prio: 1, at: m.at, lead: 'early', until: m.at - 3, en: c.en, zh: c.zh });
+      else cues.push({ id: `${m.id}:coach`, kind: 'coach', prio: 1, at: m.at, after: m.id, until: m.at - 3, en: c.en, zh: c.zh });
       const sp = signalLeftPoint(m);
       if (sp != null) cues.push({ id: `${m.id}:sig`, kind: 'rbSignal', prio: 0, at: sp, until: sp + 12, en: 'Signal left now.', zh: '现在打左灯，准备出环岛' });
     }
@@ -401,14 +406,14 @@ export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true
     }
   }
 
-  for (const a of anns) {
+  for (const a of useScript ? [] : anns) { // the video's own words already cover pull-ups and parking
     if (a.type !== 'manoeuvre') continue;
     const t = pullUpText(a);
     cues.push({ id: `a:${a.id}`, kind: 'pullup', prio: 0, at: a.at, until: a.at - 3, en: t.en, zh: t.zh });
     cues.push({ id: `a:${a.id}:go`, kind: 'moveoff', prio: 0, at: a.at, after: `a:${a.id}`, en: t.goEn, zh: t.goZh });
   }
 
-  if (showMe) {
+  if (showMe && !useScript) {
     // somewhere quiet (no direction due for the next ≥ 350 m), 20–75 % into the drive
     for (let i = 0; i <= ms.length; i++) {
       const a = i ? ms[i - 1].end : 0, b = i < ms.length ? ms[i].at : total;
@@ -423,18 +428,28 @@ export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true
 
   const last = ms[ms.length - 1];
   const nearCentre = haversine(geom[geom.length - 1], [CENTRE.lat, CENTRE.lng]) < 250;
-  cues.push({
-    id: 'arrive', kind: 'arrive', prio: 0, at: total, from: last ? last.end + 8 : 0, until: total - 3,
-    en: nearCentre ? 'Please drive back into the test centre, and park in one of the bays.' : 'Pull up on the left at the next safe place, please.',
-    zh: nearCentre ? '开回考场，停进一个车位' : '在左边安全的地方靠边停车',
-  });
-  cues.push({
-    id: 'end', kind: 'end', prio: 0, at: total,
-    en: mode === 'mock' ? "Thank you. That's the end of your test." : "That's the end of the route.",
-    zh: mode === 'mock' ? '考试结束' : '路线结束',
-  });
+  if (!useScript) {
+    cues.push({
+      id: 'arrive', kind: 'arrive', prio: 0, at: total, from: last ? last.end + 8 : 0, until: total - 3,
+      en: nearCentre ? 'Please drive back into the test centre, and park in one of the bays.' : 'Pull up on the left at the next safe place, please.',
+      zh: nearCentre ? '开回考场，停进一个车位' : '在左边安全的地方靠边停车',
+    });
+    cues.push({
+      id: 'end', kind: 'end', prio: 0, at: total,
+      en: mode === 'mock' ? "Thank you. That's the end of your test." : "That's the end of the route.",
+      zh: mode === 'mock' ? '考试结束' : '路线结束',
+    });
+  }
 
   cues.sort((a, b) => a.at - b.at || a.prio - b.prio);
+  // where the car stood still in the video (pull-ups, parking): the simulator stops there too
+  const stops = [];
+  for (const c of cues) {
+    if (c.kind !== 'script' || !c.wait) continue;
+    const s = stops[stops.length - 1];
+    if (s && Math.abs(c.at - s.at) < 30) s.dur = Math.max(s.dur, c.t - s.t0 + 6);
+    else stops.push({ at: c.at, t0: c.t, dur: 8 });
+  }
   // expected speed (from speed-limit annotations) for previews and the instruction list
   const limits = anns.filter((a) => a.type === 'speed' && a.speed).sort((a, b) => a.at - b.at);
   const vAt = (at) => {
@@ -442,7 +457,30 @@ export function buildCuePlan(route, { mode = 'mock', tipLevel = 2, showMe = true
     for (const l of limits) { if (l.at <= at + 1) mph = l.speed; else break; }
     return Math.min(mph, 40) * MPH * 0.9;
   };
-  return { cues, maneuvers: ms, total, vAt, sideSource: sides.source, mode };
+  return { cues, maneuvers: ms, total, vAt, sideSource: sides.source, mode, script: useScript, stops: stops.map(({ at, dur }) => ({ at, dur })) };
+}
+
+/**
+ * Lines from the route's video (sat-nav and examiner), said where they were said.
+ * Lines before the car moved off hold the simulator; lines said while standing still
+ * (`wait`) are only spoken once the car has stopped there.
+ */
+function scriptCues(route, geom, cum) {
+  const out = [];
+  let hint = 0;
+  route.script.forEach((s, i) => {
+    let at = s.at ?? 0;
+    if (s.lat != null) {
+      const p = project(geom, cum, [s.lat, s.lng], { atHint: hint, from: hint - 30 });
+      if (p && p.dist < 40) at = p.at;
+    }
+    hint = at;
+    out.push({
+      id: `s${i}`, kind: 'script', who: s.who === 'satnav' ? 'satnav' : 'examiner', prio: 0, at, t: s.t,
+      wait: !!s.wait, hold: at < 5, until: at + 80, en: s.text, zh: s.zh || glossZh(s.text),
+    });
+  });
+  return out;
 }
 
 /* --------------------------------------------------------------------- runner */
@@ -481,7 +519,11 @@ export class CueRunner {
       if (!r) continue;
       this.done.add(c.id);
       this.spoken.add(c.id);
-      out.push({ id: c.id, kind: c.kind, prio: c.prio, at: c.at, until: c.until ?? null, en: r.en, zh: r.zh, ...(c.kind === 'dir' ? { key: c.key, m: c.m, auto: r.auto, custom: !!c.custom, muted: c.muted } : {}) });
+      out.push({
+        id: c.id, kind: c.kind, prio: c.prio, at: c.at, until: c.until ?? null, en: r.en, zh: r.zh,
+        ...(c.kind === 'dir' ? { key: c.key, m: c.m, auto: r.auto, custom: !!c.custom, muted: c.muted } : {}),
+        ...(c.kind === 'script' ? { who: c.who, t: c.t, hold: c.hold, wait: c.wait } : {}),
+      });
     }
     return out.sort((a, b) => a.prio - b.prio);
   }
@@ -504,6 +546,12 @@ export class CueRunner {
         const auto = this.dirText(c, n);
         return c.custom ? { en: c.custom, zh: auto.zh, auto: auto.en } : { ...auto, auto: auto.en };
       }
+      case 'script':
+        if (at > c.until) return 'skip';
+        if (at < c.at - 3) return false;
+        // said while the car stood still in the video ("When you are ready, drive on"): wait for a stop
+        if (c.wait && stopped < 2) return at > c.at + 40 ? 'skip' : false;
+        return say;
       case 'coach': {
         const w = waitParent();
         if (w !== null) return w;

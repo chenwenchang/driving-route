@@ -8,7 +8,21 @@ export const ARROW = {
   straight: '↑', uturn: '↶', roundabout: '⟳', depart: '●', arrive: '◎', merge: '⤴', pull: 'P', ask: '?',
 };
 
+/** Arrow for a sat-nav line from a video ("After 300 yards, turn left" → ←). */
+function scriptIcon(text) {
+  const t = String(text).toLowerCase();
+  if (/destination/.test(t)) return ARROW.arrive;
+  if (/roundabout/.test(t)) return ARROW.roundabout;
+  if (/take the exit|slip/.test(t)) return ARROW.merge;
+  if (/keep left|bear left/.test(t)) return ARROW['slight left'];
+  if (/keep right|bear right/.test(t)) return ARROW['slight right'];
+  const first = t.match(/\b(left|right)\b/);
+  if (first) return ARROW[first[1]];
+  return ARROW.straight;
+}
+
 function iconFor(s) {
+  if (s.kind === 'script') return s.who === 'satnav' ? scriptIcon(s.en) : '考';
   if (s.kind === 'open') return ARROW.depart;
   if (s.kind === 'arrive' || s.kind === 'end') return ARROW.arrive;
   if (s.kind === 'pullup' || s.kind === 'moveoff') return ARROW.pull;
@@ -26,12 +40,15 @@ function iconFor(s) {
  * keepMuted: also list directions the user muted (for the editor).
  * @returns {{at, sayAt, en, zh, icon, kind, key, auto, custom, muted, road, loc}[]}
  */
-export function buildInstructions(route, { keepMuted = false } = {}) {
-  const plan = buildCuePlan(route, { mode: 'mock', showMe: false, keepMuted });
+export function buildInstructions(route, { keepMuted = false, source = 'auto' } = {}) {
+  const plan = buildCuePlan(route, { mode: 'mock', showMe: false, keepMuted, source });
   if (!plan) return [];
   const geom = route.route.geometry;
   const cum = cumulative(geom);
-  const rows = transcript(plan).filter((s) => s.kind !== 'end' && s.kind !== 'moveoff');
+  // a video script is listed as recorded (a dry run would skip lines said while parked)
+  const rows = plan.script
+    ? plan.cues.filter((c) => c.kind === 'script').map((c) => ({ ...c, sayAt: c.at }))
+    : transcript(plan).filter((s) => s.kind !== 'end' && s.kind !== 'moveoff');
   // directions with no room to be said (right after another junction) still get a row
   const said = new Set(rows.map((s) => s.id));
   const runner = new CueRunner(plan);
@@ -56,6 +73,8 @@ export function buildInstructions(route, { keepMuted = false } = {}) {
       muted: !!s.muted,
       road: s.m?.road || '',
       loc: s.m?.loc || pointAt(geom, cum, s.at),
-      rb: s.m ? s.m.kind === 'rb' || s.m.kind === 'mini' : false,
+      rb: s.m ? s.m.kind === 'rb' || s.m.kind === 'mini' : s.kind === 'script' && /roundabout/i.test(s.en),
+      who: s.who || (s.kind === 'tip' || s.kind === 'coach' ? 'coach' : 'examiner'),
+      t: s.t ?? null, // video time, for lines taken from the video
     }));
 }

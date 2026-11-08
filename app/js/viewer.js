@@ -3,7 +3,7 @@
 // cards, instructions, navigation/export, and a step-through "预习" review mode.
 import { Store } from './store.js';
 import { TYPES, LEVELS, titleOf, CENTRE } from './core/model.js';
-import { cumulative, fmtDist, fmtDuration, project } from './core/geo.js';
+import { cumulative, fmtDist, fmtDuration, fmtTime, project } from './core/geo.js';
 import { buildInstructions, ARROW } from './core/instructions.js';
 import { buildTimeline } from './core/timeline.js';
 import { googleMapsParts, toGPX, toKML, safeFileName } from './core/exporters.js';
@@ -126,7 +126,7 @@ async function showRoute(id) {
     S.route = await store.get(id);
     S.cum = cumulative(S.route.route?.geometry || []);
     S.timeline = buildTimeline(S.route, S.cum);
-    S.instructions = buildInstructions(S.route);
+    S.instructions = buildInstructions(S.route, { source: voiceSettings().source });
     drive.setRoute(S.route);
     S.selected = null; S.review = false;
     S.filter = { key: true, type: null };
@@ -280,12 +280,21 @@ function rbsHtml() {
 function stepsHtml() {
   if (!S.instructions.length) return '<div class="empty">没有路线指令</div>';
   const vs = voiceSettings();
-  const hint = `<div class="voice-hint">
-    <b>英文考官语音（模仿路考）</b>
-    <span>下面是考官会说的话。点 ${UI.speaker} 试听；地图右上角打开「语音」，再点「定位」就会在合适的位置播报。在家可以点「模拟」沿路线预演。</span>
-    <span class="small muted">当前：${vs.mode === 'practice' ? '练习模式（考官指令 + 英文提示）' : '模拟考试模式（只有考官指令）'} · 在设置里切换</span></div>`;
-  return `${hint}<div class="steps">${S.instructions.map((s, i) => `<div class="step ${s.icon === ARROW.roundabout ? 'rb' : ''}" data-step="${i}" role="button" tabindex="0">
-    <span class="ic">${esc(s.icon)}</span><span style="min-width:0"><b lang="en-GB">${esc(s.en)}</b><small>${esc(s.zh)}${s.road ? ` · ${esc(s.road)}` : ''}</small></span>
+  const scripted = S.instructions.some((s) => s.kind === 'script');
+  const mode = vs.mode === 'practice' ? '练习模式（加英文提示）' : '模拟考试模式';
+  const hint = scripted
+    ? `<div class="voice-hint">
+      <b>视频里的原话：导航 + 考官</b>
+      <span>这条路线的语音用的是 YouTube 视频里导航和考官说的话，车开到视频里说这句话的地方就播报。点 ${UI.speaker} 试听。</span>
+      <span class="small muted">当前：${mode} · 在设置里可以换成自动生成的考官指令</span></div>`
+    : `<div class="voice-hint">
+      <b>英文考官语音（模仿路考）</b>
+      <span>下面是考官会说的话。点 ${UI.speaker} 试听；地图右上角打开「语音」，再点「定位」就会在合适的位置播报。在家可以点「模拟」沿路线预演。</span>
+      <span class="small muted">当前：${mode} · 在设置里切换</span></div>`;
+  const whoChip = (s) => (s.kind === 'script' ? `<span class="who-chip ${s.who}">${s.who === 'satnav' ? '导航' : '考官'}</span>` : '');
+  const time = (s) => (s.t != null ? ` · 视频 ${fmtTime(s.t)}` : '');
+  return `${hint}<div class="steps">${S.instructions.map((s, i) => `<div class="step ${s.rb || s.icon === ARROW.roundabout ? 'rb' : ''} ${s.who === 'satnav' ? 'satnav' : ''}" data-step="${i}" role="button" tabindex="0">
+    <span class="ic">${esc(s.icon)}</span><span style="min-width:0"><b lang="en-GB">${whoChip(s)}${esc(s.en)}</b><small>${esc(s.zh)}${s.road ? ` · ${esc(s.road)}` : ''}${time(s)}</small></span>
     <span class="d">${fmtDist(s.at)}</span><button class="btn icon ghost say" type="button" data-say="${i}" title="试听" aria-label="试听">${UI.speaker}</button></div>`).join('')}</div>`;
 }
 
@@ -334,7 +343,7 @@ function bindSheetBody() {
     const say = e.target.closest('[data-say]');
     if (say) {
       const s = S.instructions[+say.dataset.say];
-      if (s) drive.sayNow(s.en, s.zh);
+      if (s) drive.sayNow(s.en, s.zh, s.kind === 'script' ? s.who : 'examiner');
       return;
     }
     const st = e.target.closest('[data-step]');
@@ -463,16 +472,17 @@ function fillVoiceSettings() {
   $('#set-vrate').value = String(v.rate);
   $('#set-vshowme').checked = !!v.showMe;
   $('#set-vchime').checked = !!v.chime;
+  $('#set-vsource').value = v.source || 'auto';
   $('#set-vtips').closest('.field').classList.toggle('hidden', v.mode !== 'practice');
   fillVoices();
 }
 function fillVoices() {
-  const sel = $('#set-voice');
   const voices = drive.speaker.voices();
-  const cur = drive.speaker.voice();
-  sel.innerHTML = voices.length
+  const options = (cur) => (voices.length
     ? voices.map((x) => `<option value="${esc(x.voiceURI)}" ${cur && x.voiceURI === cur.voiceURI ? 'selected' : ''}>${esc(x.name)} (${esc(x.lang)})${x.localService ? '' : ' · 联网'}</option>`).join('')
-    : '<option value="">（没有英文语音：只显示字幕）</option>';
+    : '<option value="">（没有英文语音：只显示字幕）</option>');
+  $('#set-voice').innerHTML = options(drive.speaker.voice('examiner'));
+  $('#set-voice2').innerHTML = options(drive.speaker.voice('satnav'));
   const gb = voices.some((x) => /^en[-_]gb/i.test(x.lang));
   $('#set-vinfo').textContent = !drive.speaker.supported
     ? '这个浏览器不支持语音合成，只能显示字幕。'
@@ -492,7 +502,15 @@ $('#set-vrate').onchange = (e) => onVoiceSetting({ rate: +e.target.value });
 $('#set-vshowme').onchange = (e) => onVoiceSetting({ showMe: e.target.checked });
 $('#set-vchime').onchange = (e) => onVoiceSetting({ chime: e.target.checked });
 $('#set-voice').onchange = (e) => onVoiceSetting({ voiceURI: e.target.value });
-$('#set-vtest').onclick = () => drive.sayNow('At the roundabout, take the third exit, please.', '环岛第三出口');
+$('#set-voice2').onchange = (e) => onVoiceSetting({ satnavVoiceURI: e.target.value });
+$('#set-vsource').onchange = (e) => {
+  onVoiceSetting({ source: e.target.value });
+  if (S.route) { S.instructions = buildInstructions(S.route, { source: e.target.value }); if (S.tab === 'steps' && !S.selected) renderSheet(); }
+};
+$('#set-vtest').onclick = () => {
+  drive.sayNow('After 300 yards, go right on the roundabout and take the third exit, A14, towards Newmarket.', '300 码后环岛第三出口，往 Newmarket 方向', 'satnav');
+  setTimeout(() => drive.speaker.say({ en: 'When you are ready, drive on, please.', zh: '准备好就继续开', prio: 0, kind: 'preview', who: 'examiner' }), 300);
+};
 $('#dlg-settings').addEventListener('click', (e) => { if (e.target.closest('[data-close]') || e.target.id === 'dlg-settings') $('#dlg-settings').close(); });
 $('#set-theme').onchange = (e) => { settings.set('theme', e.target.value); applyTheme(e.target.value); };
 $('#set-gpx').onchange = (e) => settings.set('gpxLang', e.target.value);

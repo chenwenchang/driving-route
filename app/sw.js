@@ -1,6 +1,6 @@
 // Service worker: offline app shell + routes you have opened + map tiles you have viewed.
 // Network-first for app/data files (so updates show up), cache-first for map tiles.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `shell-${VERSION}`;
 const DATA = 'data-v1';
 const TILES = 'tiles-v2'; // v1 held opaque (no-cors) tiles, which can't answer CORS requests
@@ -12,7 +12,7 @@ const SHELL_FILES = [
   'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css',
   'js/viewer.js', 'js/store.js',
   'js/core/model.js', 'js/core/geo.js', 'js/core/osrm.js', 'js/core/osm.js', 'js/core/roundabout.js',
-  'js/core/analyze.js', 'js/core/timeline.js', 'js/core/instructions.js', 'js/core/examiner.js', 'js/core/exporters.js', 'js/core/rules.js',
+  'js/core/analyze.js', 'js/core/timeline.js', 'js/core/instructions.js', 'js/core/examiner.js', 'js/core/gloss.js', 'js/core/exporters.js', 'js/core/rules.js',
   'js/ui/icons.js', 'js/ui/util.js', 'js/ui/mapkit.js', 'js/ui/rbdiagram.js', 'js/ui/detail.js', 'js/ui/speech.js', 'js/ui/drive.js',
 ];
 

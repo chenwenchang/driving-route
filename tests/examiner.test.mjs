@@ -5,6 +5,9 @@ import { buildCuePlan, CueRunner, transcript, simSpeedAt, laneAdvice, tipText, s
 import { buildInstructions } from '../app/js/core/instructions.js';
 import { buildSegments } from '../app/js/core/osm.js';
 import { detectSideRoads } from '../app/js/core/analyze.js';
+import { buildTimeline } from '../app/js/core/timeline.js';
+import { glossZh } from '../app/js/core/gloss.js';
+import { speakable } from '../app/js/ui/speech.js';
 
 // local metres → [lat, lng] (x east, y north), well away from the test centre
 const LAT0 = 52.2, LNG0 = 0.13, M = 111195;
@@ -162,4 +165,56 @@ test('side roads from OSM: left/right, one-way entry, service roads ignored', ()
   const right = sides.find((s) => s.side === 'right');
   assert.ok(!right.ok && right.amb); // one-way towards us: can't turn in
   void pointAt;
+});
+
+test('video script: lines are said where they were said; parked lines wait for a stop', () => {
+  const r = straightRoute();
+  const geom = r.route.geometry, cum = cumulative(geom);
+  const here = (d) => { const p = pointAt(geom, cum, d); return { lat: p[0], lng: p[1], at: d }; };
+  r.script = [
+    { t: 60, who: 'examiner', text: "When you're ready, drive on.", ...here(0) },
+    { t: 80, who: 'satnav', text: 'After 300 yards, turn left.', ...here(20) },
+    { t: 95, who: 'examiner', text: "Pull up on the left when it's safe to do so, please.", ...here(150) },
+    { t: 110, who: 'examiner', text: 'Thank you. When you are ready, drive on.', ...here(160), wait: true },
+    { t: 130, who: 'satnav', text: 'Turn left.', ...here(280) },
+  ];
+  const plan = buildCuePlan(r, { mode: 'mock' });
+  assert.ok(plan.script);
+  assert.ok(!plan.cues.some((c) => c.kind === 'dir' || c.kind === 'open'));
+  assert.equal(plan.stops.length, 1);
+  const runner = new CueRunner(plan);
+  const say = (o) => runner.update(o).map((c) => c.en);
+  assert.deepEqual(say({ at: 0, v: 0, t: 0 }), ["When you're ready, drive on."]);
+  assert.deepEqual(say({ at: 18, v: 10, t: 2 }), ['After 300 yards, turn left.']);
+  assert.equal(say({ at: 150, v: 10, t: 15 }).length, 1);
+  assert.deepEqual(say({ at: 160, v: 5, t: 16 }), []); // still rolling: the parked line waits
+  say({ at: 161, v: 0, t: 17 });
+  assert.deepEqual(say({ at: 161, v: 0, t: 20 }), ['Thank you. When you are ready, drive on.']);
+  assert.deepEqual(say({ at: 279, v: 8, t: 40 }), ['Turn left.']);
+  const rows = buildInstructions(r);
+  assert.equal(rows.length, 5);
+  assert.equal(rows[1].who, 'satnav');
+  assert.equal(rows[1].zh, '300 码后左转');
+  assert.equal(rows[1].t, 80);
+  // generated examiner directions are still available
+  assert.ok(buildCuePlan(r, { source: 'generated' }).cues.some((c) => c.kind === 'dir'));
+});
+
+test('timeline uses time anchors from the captions', () => {
+  const r = straightRoute();
+  const geom = r.route.geometry, cum = cumulative(geom);
+  const p0 = pointAt(geom, cum, 0), p1 = pointAt(geom, cum, 300);
+  r.timeAnchors = [{ t: 100, lat: p0[0], lng: p0[1] }, { t: 160, lat: p1[0], lng: p1[1] }];
+  const tl = buildTimeline(r);
+  assert.ok(Math.abs(tl.timeAt(150) - 130) < 1);
+  assert.ok(Math.abs(tl.atTime(145) - 225) < 2);
+});
+
+test('chinese gloss and spoken road numbers', () => {
+  assert.equal(glossZh('After 300 yards, turn left, Northfield Avenue, then cross the roundabout and take the second exit.'), '300 码后左转 Northfield Avenue，然后环岛第二出口（直行方向）');
+  assert.equal(glossZh("Pull up on the left when it's safe to do so, please."), '在左边安全的地方靠边停车');
+  assert.equal(glossZh('Go right on the roundabout and take the third exit, A14, towards Newmarket.'), '环岛第三出口（右转方向） A14 往 Newmarket 方向');
+  assert.equal(glossZh('Some chatter the rules do not know.'), '');
+  assert.equal(speakable('At the end of the road, turn right, B1049, Histon Road.'), 'At the end of the road, turn right, B 10 49, Histon Road.');
+  assert.equal(speakable('Take the exit, A1309.'), 'Take the exit, A 13 oh 9.');
 });
